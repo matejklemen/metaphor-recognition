@@ -2,6 +2,7 @@ import logging
 import os
 import re
 import xml.etree.ElementTree as ET
+from collections import Counter
 from typing import List, Optional
 
 import pandas as pd
@@ -13,7 +14,7 @@ def namespace(element):
 	return m.group(0) if m else ''
 
 
-def resolve(element):
+def resolve(element, expand_phrase: bool = False):
 	"""
 		MRWd = direct metaphor
 		MRWi = indirect metaphor
@@ -53,7 +54,28 @@ def resolve(element):
 
 			return parsed_data
 
-	return _resolve_recursively(element, "O", [])
+	curr_annotations = _resolve_recursively(element, "O", [])
+	if not isinstance(curr_annotations, list):
+		curr_annotations = [curr_annotations]
+
+	# Expand metaphore type tag across the whole phrase (e.g., ["MRWd", "O"] -> ["MRWd", "MRWd"])
+	if expand_phrase and len(curr_annotations) > 1:
+		print(f"Before: {curr_annotations}")
+		curr_mtypes = list(map(lambda trip: trip[1], curr_annotations))
+		count_mtypes = Counter(curr_mtypes)
+		most_common_mtype = "O"
+		# Rules: prefer MRWd>MRWi>WIDLI>MFlag>O, no matter the tag frequency inside phrase
+		for _mt in ["MRWd", "MRWi", "WIDLI", "MFlag"]:
+			if _mt in count_mtypes:
+				most_common_mtype = _mt
+				break
+
+		# Encode using IOB2
+		curr_annotations = [(curr_tok, f"I-{most_common_mtype}", curr_frame) for (curr_tok, _, curr_frame) in curr_annotations]
+		first_tok, _, first_frame = curr_annotations[0]
+		curr_annotations[0] = (first_tok, f"B-{most_common_mtype}", first_frame)
+
+	return curr_annotations
 
 
 if __name__ == "__main__":
@@ -70,6 +92,7 @@ if __name__ == "__main__":
 		"document_name": [],
 		"idx_paragraph": [],
 		"idx_sentence": [],
+		"idx_sentence_glob": [],
 		"sentence_words": [],
 		"met_type": [],
 		"met_frame": []
@@ -81,6 +104,7 @@ if __name__ == "__main__":
 		root = curr_doc.getroot()
 		NAMESPACE = namespace(root)
 
+		idx_sent_glob = 0
 		for idx_par, curr_par in enumerate(root.iterfind(f"{NAMESPACE}p")):
 			for idx_sent, curr_sent in enumerate(curr_par.iterfind(f"{NAMESPACE}s")):
 				words, types, frames = [], [], []
@@ -97,9 +121,12 @@ if __name__ == "__main__":
 				data["document_name"].append(fname)
 				data["idx_paragraph"].append(idx_par)
 				data["idx_sentence"].append(idx_sent)
+				data["idx_sentence_glob"].append(idx_sent_glob)
 				data["sentence_words"].append(words)
 				data["met_type"].append(types)
 				data["met_frame"].append(frames)
+
+				idx_sent_glob += 1
 
 	data = pd.DataFrame(data)
 	data.to_csv("data.tsv", sep="\t", index=False)
