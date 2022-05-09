@@ -60,7 +60,6 @@ def resolve(element, expand_phrase: bool = False):
 
 	# Expand metaphore type tag across the whole phrase (e.g., ["MRWd", "O"] -> ["MRWd", "MRWd"])
 	if expand_phrase and len(curr_annotations) > 1:
-		print(f"Before: {curr_annotations}")
 		curr_mtypes = list(map(lambda trip: trip[1], curr_annotations))
 		count_mtypes = Counter(curr_mtypes)
 		most_common_mtype = "O"
