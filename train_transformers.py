@@ -13,6 +13,7 @@ from utils import token_precision, token_recall, token_f1
 
 import logging
 
+# TODO: model saving based on validation metric
 parser = argparse.ArgumentParser()
 parser.add_argument("--model_dir", type=str, default="debug")
 
@@ -24,7 +25,7 @@ parser.add_argument("--label_scheme", type=str, default="simple",
 					choices=["simple"])
 
 parser.add_argument("--pretrained_name_or_path", type=str, default="EMBEDDIA/sloberta")
-parser.add_argument("--learning_rate", type=int, default=2e-5)
+parser.add_argument("--learning_rate", type=float, default=2e-5)
 parser.add_argument("--max_length", type=int, default=32)
 parser.add_argument("--history_prev_sents", type=int, default=1,
 					help="Number of previous sentences to take as additional context")
