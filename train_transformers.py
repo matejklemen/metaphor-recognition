@@ -126,6 +126,7 @@ if __name__ == "__main__":
 		enc_train_out.append(fixed_out)
 
 	enc_train_in["labels"] = torch.tensor(enc_train_out)
+	del enc_train_in["overflow_to_sample_mapping"]
 	train_dataset = TransformersSeqDataset(**enc_train_in)
 
 	# ------------------------------------
@@ -179,6 +180,7 @@ if __name__ == "__main__":
 		enc_dev_out.append(fixed_out)
 
 	enc_dev_in["labels"] = torch.tensor(enc_dev_out)
+	del enc_dev_in["overflow_to_sample_mapping"]
 	dev_dataset = TransformersSeqDataset(**enc_dev_in)
 	num_dev_batches = (len(dev_dataset) + DEV_BATCH_SIZE - 1) // DEV_BATCH_SIZE
 
