@@ -2,6 +2,7 @@ import argparse
 import os.path
 import sys
 
+import numpy as np
 import torch
 import torch.optim as optim
 from torch.utils.data import Subset, DataLoader
@@ -27,7 +28,10 @@ parser.add_argument("--label_scheme", type=str, default="simple",
 parser.add_argument("--pretrained_name_or_path", type=str, default="EMBEDDIA/sloberta")
 parser.add_argument("--learning_rate", type=float, default=2e-5)
 parser.add_argument("--max_length", type=int, default=32)
-parser.add_argument("--history_prev_sents", type=int, default=1,
+parser.add_argument("--stride", type=int, default=None,
+					help="When examples are longer than `max_length`, examples get broken up into multiple examples "
+						 "with first `stride` subwords overlapping")
+parser.add_argument("--history_prev_sents", type=int, default=0,
 					help="Number of previous sentences to take as additional context")
 parser.add_argument("--batch_size", type=int, default=32)
 parser.add_argument("--num_epochs", type=int, default=10)
@@ -57,6 +61,7 @@ if __name__ == "__main__":
 	DEVICE = torch.device("cpu") if args.use_cpu else torch.device("cuda")
 	DEV_BATCH_SIZE = 2 * args.batch_size  # no grad computation
 	SUBSET_SIZE = args.validate_steps
+	STRIDE = args.max_length // 2 if args.stride is None else args.stride
 
 	# TODO: adapt pos_label based on scheme
 	POS_LABEL = [1]
@@ -83,23 +88,41 @@ if __name__ == "__main__":
 										  fallback_label="not_metaphor")
 
 	num_train = len(train_in)
-	enc_train_in = tokenizer.batch_encode_plus(train_in, is_split_into_words=True,
-											   max_length=args.max_length, padding="max_length", truncation=True,
-											   return_tensors="pt")
+	enc_train_in = tokenizer(
+		train_in, is_split_into_words=True,
+		max_length=args.max_length, padding="max_length", truncation=True,
+		return_overflowing_tokens=True, stride=STRIDE,
+		return_tensors="pt"
+	)
 
+	is_start_encountered = np.zeros(num_train, dtype=bool)
 	enc_train_out = []
-	# Align word-level labels with subword-level labels (including padding and special tokens)
-	for idx_ex in tqdm(range(num_train)):
-		ex_word_ids = enc_train_in.word_ids(idx_ex)
+	for idx_ex, (curr_input_ids, idx_orig_ex) in enumerate(zip(enc_train_in["input_ids"],
+															   enc_train_in["overflow_to_sample_mapping"])):
+		curr_word_ids = enc_train_in.word_ids(idx_ex)
+
+		# where does sequence actually start, i.e. after <bos>
+		nonspecial_start = 0
+		while curr_word_ids[nonspecial_start] is not None:
+			nonspecial_start += 1
+
+		# when an example is broken up, all but the first sub-example have first `stride` tokens overlapping with prev.
+		ignore_n_overlapping = 0
+		if is_start_encountered[idx_orig_ex]:
+			ignore_n_overlapping = STRIDE
+		else:
+			is_start_encountered[idx_orig_ex] = True
+
 		fixed_out = []
+		fixed_out += [LOSS_IGNORE_INDEX] * (nonspecial_start + ignore_n_overlapping)
 
-		for idx_subw, w_id in enumerate(ex_word_ids):
-			if ex_word_ids[idx_subw] is None:
-				fixed_out.append(LOSS_IGNORE_INDEX)  # ignore label for special tokens
+		for idx_subw, w_id in enumerate(curr_word_ids[(nonspecial_start + ignore_n_overlapping):],
+										start=(nonspecial_start + ignore_n_overlapping)):
+			if curr_word_ids[idx_subw] is None:
+				fixed_out.append(LOSS_IGNORE_INDEX)
 			else:
-				fixed_out.append(train_out[idx_ex][w_id])
+				fixed_out.append(train_out[idx_orig_ex][w_id])
 
-		fixed_out += [LOSS_IGNORE_INDEX] * (args.max_length - len(fixed_out))
 		enc_train_out.append(fixed_out)
 
 	enc_train_in["labels"] = torch.tensor(enc_train_out)
@@ -118,23 +141,41 @@ if __name__ == "__main__":
 									  fallback_label="not_metaphor")
 
 	num_dev = len(dev_in)
-	enc_dev_in = tokenizer.batch_encode_plus(dev_in, is_split_into_words=True,
-											 max_length=args.max_length, padding="max_length", truncation=True,
-											 return_tensors="pt")
+	enc_dev_in = tokenizer(
+		dev_in, is_split_into_words=True,
+		max_length=args.max_length, padding="max_length", truncation=True,
+		return_overflowing_tokens=True, stride=STRIDE,
+		return_tensors="pt"
+	)
 
+	is_start_encountered = np.zeros(num_dev, dtype=bool)
 	enc_dev_out = []
-	# Align word-level labels with subword-level labels (including padding and special tokens)
-	for idx_ex in tqdm(range(num_dev)):
-		ex_word_ids = enc_dev_in.word_ids(idx_ex)
+	for idx_ex, (curr_input_ids, idx_orig_ex) in enumerate(zip(enc_dev_in["input_ids"],
+															   enc_dev_in["overflow_to_sample_mapping"])):
+		curr_word_ids = enc_dev_in.word_ids(idx_ex)
+
+		# where does sequence actually start, i.e. after <bos>
+		nonspecial_start = 0
+		while curr_word_ids[nonspecial_start] is not None:
+			nonspecial_start += 1
+
+		# when an example is broken up, all but the first sub-example have first `stride` tokens overlapping with prev.
+		ignore_n_overlapping = 0
+		if is_start_encountered[idx_orig_ex]:
+			ignore_n_overlapping = STRIDE
+		else:
+			is_start_encountered[idx_orig_ex] = True
+
 		fixed_out = []
+		fixed_out += [LOSS_IGNORE_INDEX] * (nonspecial_start + ignore_n_overlapping)
 
-		for idx_subw, w_id in enumerate(ex_word_ids):
-			if ex_word_ids[idx_subw] is None:
-				fixed_out.append(LOSS_IGNORE_INDEX)  # ignore label for special tokens
+		for idx_subw, w_id in enumerate(curr_word_ids[(nonspecial_start + ignore_n_overlapping):],
+										start=(nonspecial_start + ignore_n_overlapping)):
+			if curr_word_ids[idx_subw] is None:
+				fixed_out.append(LOSS_IGNORE_INDEX)
 			else:
-				fixed_out.append(dev_out[idx_ex][w_id])
+				fixed_out.append(dev_out[idx_orig_ex][w_id])
 
-		fixed_out += [LOSS_IGNORE_INDEX] * (args.max_length - len(fixed_out))
 		enc_dev_out.append(fixed_out)
 
 	enc_dev_in["labels"] = torch.tensor(enc_dev_out)
