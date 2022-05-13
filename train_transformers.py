@@ -73,10 +73,13 @@ if __name__ == "__main__":
 
 	# TODO: iob2 will need to be handled somehow
 	POS_LABEL = []
+	FALLBACK_LABEL = None
 	if GENERAL_LABEL_SCHEME == "binary":
 		POS_LABEL = [1]
+		FALLBACK_LABEL = "not_metaphor"
 	elif GENERAL_LABEL_SCHEME == "independent":
 		POS_LABEL = list(range(1, 1 + NUM_LABELS))
+		FALLBACK_LABEL = "O"
 
 	train_df = load_df(args.train_path)
 	dev_df = load_df(args.dev_path)
@@ -95,7 +98,7 @@ if __name__ == "__main__":
 	train_in, train_out = create_examples(train_df,
 										  encoding_scheme=TAG2ID[GENERAL_LABEL_SCHEME],
 										  history_prev_sents=args.history_prev_sents,
-										  fallback_label="not_metaphor")
+										  fallback_label=FALLBACK_LABEL)
 
 	num_train = len(train_in)
 	enc_train_in = tokenizer(
@@ -147,7 +150,7 @@ if __name__ == "__main__":
 	dev_in, dev_out = create_examples(dev_df,
 									  encoding_scheme=TAG2ID[GENERAL_LABEL_SCHEME],
 									  history_prev_sents=args.history_prev_sents,
-									  fallback_label="not_metaphor")
+									  fallback_label=FALLBACK_LABEL)
 
 	num_dev = len(dev_in)
 	enc_dev_in = tokenizer(
