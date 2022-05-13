@@ -269,6 +269,7 @@ if __name__ == "__main__":
 
 			curr_dev_metric /= max(len(POS_LABEL), 1)
 			if curr_dev_metric > best_dev_metric:
+				logging.info(f"NEW BEST dev metric!")
 				best_dev_metric = curr_dev_metric
 				best_dev_metric_verbose = curr_dev_metric_verbose
 
