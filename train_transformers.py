@@ -1,6 +1,7 @@
 import argparse
 import os.path
 import sys
+from time import time
 
 import numpy as np
 import torch
@@ -9,12 +10,12 @@ from torch.utils.data import Subset, DataLoader
 from tqdm import tqdm
 from transformers import AutoTokenizer, AutoModelForTokenClassification
 
-from data import load_df, create_examples, TAG2ID, LOSS_IGNORE_INDEX, TransformersSeqDataset, ID2TAG
+from data import load_df, create_examples, TAG2ID, LOSS_IGNORE_INDEX, TransformersSeqDataset, ID2TAG, \
+	transform_met_types
 from utils import token_precision, token_recall, token_f1
 
 import logging
 
-# TODO: model saving based on validation metric
 parser = argparse.ArgumentParser()
 parser.add_argument("--model_dir", type=str, default="debug")
 
@@ -22,8 +23,11 @@ parser.add_argument("--train_path", type=str, default="data/train_data.tsv")
 parser.add_argument("--dev_path", type=str, default="data/dev_data.tsv")
 parser.add_argument("--test_path", type=str, default="data/test_data.tsv")
 
-parser.add_argument("--label_scheme", type=str, default="simple",
-					choices=["simple"])
+# <option>_N indicates N labels being taken into account, others are treated as "other"
+# Priority: MRWd, MRWi, WIDLI, MFlag
+# Example: independent_3 will encode MRWd, MRWi, WIDLI separately, and treat MFlag same as no metaphor
+parser.add_argument("--label_scheme", type=str, default="binary_2",
+					choices=["binary_2", "binary_3", "binary_4", "independent_2", "independent_3", "independent_4"])
 
 parser.add_argument("--pretrained_name_or_path", type=str, default="EMBEDDIA/sloberta")
 parser.add_argument("--learning_rate", type=float, default=2e-5)
@@ -62,9 +66,16 @@ if __name__ == "__main__":
 	DEV_BATCH_SIZE = 2 * args.batch_size  # no grad computation
 	SUBSET_SIZE = args.validate_steps
 	STRIDE = args.max_length // 2 if args.stride is None else args.stride
+	# Convert from e.g., "binary_2" -> "binary", "2"
+	GENERAL_LABEL_SCHEME, NUM_LABELS = args.label_scheme.split("_")
+	NUM_LABELS = int(NUM_LABELS)
 
-	# TODO: adapt pos_label based on scheme
-	POS_LABEL = [1]
+	# TODO: iob2 will need to be handled somehow
+	POS_LABEL = []
+	if GENERAL_LABEL_SCHEME == "binary":
+		POS_LABEL = [1]
+	elif GENERAL_LABEL_SCHEME == "independent":
+		POS_LABEL = list(range(1, 1 + NUM_LABELS))
 
 	train_df = load_df(args.train_path)
 	dev_df = load_df(args.dev_path)
@@ -72,18 +83,16 @@ if __name__ == "__main__":
 
 	tokenizer = AutoTokenizer.from_pretrained(args.pretrained_name_or_path)
 	model = AutoModelForTokenClassification.from_pretrained(args.pretrained_name_or_path,
-															num_labels=len(TAG2ID[args.label_scheme])).to(DEVICE)
+															num_labels=len(TAG2ID[GENERAL_LABEL_SCHEME])).to(DEVICE)
 	optimizer = optim.AdamW(model.parameters(), lr=args.learning_rate)
 
 	# ------------------------------------
 
 	orig_train_lbls = train_df["met_type"].tolist()
-	if args.label_scheme == "simple":
-		train_df["met_type"] = train_df["met_type"].apply(lambda _fine_labels:
-														  list(map(lambda _lbl: "metaphor" if _lbl in ("MRWd", "MRWi") else "not_metaphor", _fine_labels)))
+	train_df["met_type"] = transform_met_types(train_df["met_type"].tolist(), args.label_scheme)
 
 	train_in, train_out = create_examples(train_df,
-										  encoding_scheme=TAG2ID[args.label_scheme],
+										  encoding_scheme=TAG2ID[GENERAL_LABEL_SCHEME],
 										  history_prev_sents=args.history_prev_sents,
 										  fallback_label="not_metaphor")
 
@@ -132,12 +141,10 @@ if __name__ == "__main__":
 	# ------------------------------------
 
 	orig_dev_lbls = dev_df["met_type"].tolist()
-	if args.label_scheme == "simple":
-		dev_df["met_type"] = dev_df["met_type"].apply(lambda _fine_labels:
-													  list(map(lambda _lbl: "metaphor" if _lbl in ("MRWd", "MRWi") else "not_metaphor", _fine_labels)))
+	dev_df["met_type"] = transform_met_types(dev_df["met_type"].tolist(), args.label_scheme)
 
 	dev_in, dev_out = create_examples(dev_df,
-									  encoding_scheme=TAG2ID[args.label_scheme],
+									  encoding_scheme=TAG2ID[GENERAL_LABEL_SCHEME],
 									  history_prev_sents=args.history_prev_sents,
 									  fallback_label="not_metaphor")
 
@@ -187,6 +194,8 @@ if __name__ == "__main__":
 	# ------------------------------------
 	logging.info(f"Loaded {len(train_dataset)} train examples, {len(dev_dataset)} dev examples")
 
+	ts = time()
+	best_dev_metric, best_dev_metric_verbose = 0.0, None
 	num_train_subsets = (len(train_dataset) + SUBSET_SIZE - 1) // SUBSET_SIZE
 	for idx_epoch in range(args.num_epochs):
 		logging.info(f"Epoch #{1 + idx_epoch}/{args.num_epochs}")
@@ -229,10 +238,23 @@ if __name__ == "__main__":
 			dev_preds = torch.cat(dev_preds)
 
 			logging.info(f"Dev loss: {dev_loss / num_dev_batches: .4f}")
+			curr_dev_metric = 0.0
+			curr_dev_metric_verbose = []
 			for curr_label in POS_LABEL:
-				curr_label_str = ID2TAG[args.label_scheme][curr_label]
+				curr_label_str = ID2TAG[GENERAL_LABEL_SCHEME][curr_label]
 				dev_p = token_precision(dev_dataset.labels, dev_preds, pos_label=1)
 				dev_r = token_recall(dev_dataset.labels, dev_preds, pos_label=1)
 				dev_f1 = token_f1(dev_dataset.labels, dev_preds, pos_label=1)
 				logging.info(f"[{curr_label_str}] dev P={dev_p:.3f}, R={dev_r:.3f}, F1={dev_f1:.3f}")
 
+				curr_dev_metric += dev_f1
+				curr_dev_metric_verbose.append(f"[{curr_label_str}] dev P={dev_p:.3f}, R={dev_r:.3f}, F1={dev_f1:.3f}")
+
+			curr_dev_metric /= max(len(POS_LABEL), 1)
+			if curr_dev_metric > best_dev_metric:
+				best_dev_metric = curr_dev_metric
+				best_dev_metric_verbose = curr_dev_metric_verbose
+
+	logging.info(f"Training finished. Took {time() - ts:.3f}s")
+	logging.info(f"Best validation metric: {best_dev_metric:.3f}")
+	logging.info("Best validation metric (verbose):\n{}".format("\n".join(best_dev_metric_verbose)))

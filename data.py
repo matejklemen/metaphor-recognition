@@ -1,17 +1,17 @@
 import ast
 import itertools
-from typing import Dict, Optional, Tuple, List
+from typing import Dict, Optional, Tuple, List, Iterable
 
 import numpy as np
 import pandas as pd
 from torch.utils.data import Dataset
 
-# TODO: There are more tags, but we currently ignore them (e.g., MFlag), i.e. encode them as "O"
+POS_MET_TYPES = ["MRWd", "MRWi", "WIDLI", "MFlag"]
 TAG2ID = {
-	"simple": {_tag: _i for _i, _tag in enumerate(["not_metaphor", "metaphor"])},
-	"independent": {_tag: _i for _i, _tag in enumerate(["O", "MRWd", "MRWi", "WIDLI"])},
+	"binary": {_tag: _i for _i, _tag in enumerate(["not_metaphor", "metaphor"])},
+	"independent": {_tag: _i for _i, _tag in enumerate(["O"] + POS_MET_TYPES)},
 	"iob2": {_tag: _i for _i, _tag in enumerate(["O"] + list(map(lambda tup: "".join(tup),
-																 itertools.product(["B-", "I-"], ["MRWd", "MRWi", "WIDLI"]))))}
+																 itertools.product(["B-", "I-"], POS_MET_TYPES))))}
 }
 ID2TAG = {curr_scheme: {_i: _tag for _tag, _i in TAG2ID[curr_scheme].items()} for curr_scheme in TAG2ID}
 # This is used to mark labels that should not be taken into account in loss calculation
@@ -32,6 +32,29 @@ class TransformersSeqDataset(Dataset):
 
 	def __len__(self):
 		return len(getattr(self, self.valid_attrs[0]))
+
+
+def transform_met_types(met_types: Iterable[Iterable[str]], label_scheme: str):
+	assert label_scheme in ["binary_2", "binary_3", "binary_4",
+							"independent_2", "independent_3", "independent_4"]
+	_, first_n = label_scheme.split("_")
+	POS_LABELS_SET = set(POS_MET_TYPES[: int(first_n)])
+
+	mapped_types = []
+	if label_scheme.startswith("binary"):
+		for curr_types in met_types:
+			mapped_types.append(
+				list(map(lambda _lbl: "metaphor" if _lbl in POS_LABELS_SET else "not_metaphor", curr_types))
+			)
+	elif label_scheme.startswith("independent"):
+		for curr_types in met_types:
+			mapped_types.append(
+				list(map(lambda _lbl: _lbl if _lbl in POS_LABELS_SET else "O", curr_types))
+			)
+	else:
+		raise NotImplementedError(f"Label scheme '{label_scheme}' unsupported")
+
+	return mapped_types
 
 
 def load_df(file_path) -> pd.DataFrame:
