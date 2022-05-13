@@ -1,4 +1,5 @@
 import argparse
+import json
 import os.path
 import sys
 from time import time
@@ -42,7 +43,7 @@ parser.add_argument("--batch_size", type=int, default=32)
 parser.add_argument("--num_epochs", type=int, default=10)
 parser.add_argument("--validate_steps", type=int, default=3000)
 
-
+parser.add_argument("--random_seed", type=int, default=None)
 parser.add_argument("--use_cpu", action="store_true")
 
 if __name__ == "__main__":
@@ -62,6 +63,18 @@ if __name__ == "__main__":
 	if not args.use_cpu and not torch.cuda.is_available():
 		logging.info(f"No CUDA device found, overriding `--use_cpu` flag")
 		args.use_cpu = True
+
+	for k, v in vars(args).items():
+		v_str = str(v)
+		v_str = f"...{v_str[-(50 - 3):]}" if len(v_str) > 50 else v_str
+		logging.info(f"|{k:30s}|{v_str:50s}|")
+
+	with open(os.path.join(args.model_dir, "training_args.json"), "w", encoding="utf-8") as f_conf:
+		json.dump(vars(args), fp=f_conf, indent=4)
+
+	if args.random_seed is not None:
+		torch.manual_seed(args.random_seed)
+		np.random.seed(args.random_seed)
 
 	DEVICE = torch.device("cpu") if args.use_cpu else torch.device("cuda")
 	DEV_BATCH_SIZE = 2 * args.batch_size  # no grad computation
