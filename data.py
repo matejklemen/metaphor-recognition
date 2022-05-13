@@ -35,8 +35,8 @@ class TransformersSeqDataset(Dataset):
 
 
 def transform_met_types(met_types: Iterable[Iterable[str]], label_scheme: str):
-	assert label_scheme in ["binary_2", "binary_3", "binary_4",
-							"independent_2", "independent_3", "independent_4"]
+	assert label_scheme in ["binary_1", "binary_2", "binary_3", "binary_4",
+							"independent_1", "independent_2", "independent_3", "independent_4"]
 	_, first_n = label_scheme.split("_")
 	POS_LABELS_SET = set(POS_MET_TYPES[: int(first_n)])
 

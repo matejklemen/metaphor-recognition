@@ -27,7 +27,8 @@ parser.add_argument("--test_path", type=str, default="data/test_data.tsv")
 # Priority: MRWd, MRWi, WIDLI, MFlag
 # Example: independent_3 will encode MRWd, MRWi, WIDLI separately, and treat MFlag same as no metaphor
 parser.add_argument("--label_scheme", type=str, default="binary_2",
-					choices=["binary_2", "binary_3", "binary_4", "independent_2", "independent_3", "independent_4"])
+					choices=["binary_1", "binary_2", "binary_3", "binary_4",
+							 "independent_1", "independent_2", "independent_3", "independent_4"])
 
 parser.add_argument("--pretrained_name_or_path", type=str, default="EMBEDDIA/sloberta")
 parser.add_argument("--learning_rate", type=float, default=2e-5)
