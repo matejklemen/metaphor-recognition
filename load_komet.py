@@ -63,8 +63,8 @@ def resolve(element, expand_phrase: bool = False):
 		curr_mtypes = list(map(lambda trip: trip[1], curr_annotations))
 		count_mtypes = Counter(curr_mtypes)
 		most_common_mtype = "O"
-		# Rules: prefer MRWd>MRWi>WIDLI>MFlag>O, no matter the tag frequency inside phrase
-		for _mt in ["MRWd", "MRWi", "WIDLI", "MFlag"]:
+		# Rules: prefer MRWi>MRWd>WIDLI>MFlag>O, no matter the tag frequency inside phrase
+		for _mt in ["MRWi", "MRWd", "WIDLI", "MFlag"]:
 			if _mt in count_mtypes:
 				most_common_mtype = _mt
 				break

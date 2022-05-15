@@ -25,8 +25,8 @@ parser.add_argument("--dev_path", type=str, default="data/dev_data.tsv")
 parser.add_argument("--test_path", type=str, default="data/test_data.tsv")
 
 # <option>_N indicates N labels being taken into account, others are treated as "other"
-# Priority: MRWd, MRWi, WIDLI, MFlag
-# Example: independent_3 will encode MRWd, MRWi, WIDLI separately, and treat MFlag same as no metaphor
+# Priority: MRWi, MRWd, WIDLI, MFlag
+# Example: independent_3 will encode MRWi, MRWd, WIDLI separately, and treat MFlag same as no metaphor
 parser.add_argument("--label_scheme", type=str, default="binary_2",
 					choices=["binary_1", "binary_2", "binary_3", "binary_4",
 							 "independent_1", "independent_2", "independent_3", "independent_4"])

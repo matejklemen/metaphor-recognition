@@ -6,7 +6,7 @@ import numpy as np
 import pandas as pd
 from torch.utils.data import Dataset
 
-POS_MET_TYPES = ["MRWd", "MRWi", "WIDLI", "MFlag"]
+POS_MET_TYPES = ["MRWi", "MRWd", "WIDLI", "MFlag"]
 TAG2ID = {
 	"binary": {_tag: _i for _i, _tag in enumerate(["not_metaphor", "metaphor"])},
 	"independent": {_tag: _i for _i, _tag in enumerate(["O"] + POS_MET_TYPES)},
