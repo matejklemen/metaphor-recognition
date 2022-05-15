@@ -6,7 +6,7 @@ def token_precision(true_labels, pred_labels, pos_label: int = 1, ignore_label: 
 
 	valid_true = true_labels[valid_mask] == pos_label
 	valid_pred = pred_labels[valid_mask] == pos_label
-	return precision_score(y_true=valid_true, y_pred=valid_pred, average="binary", pos_label=pos_label)
+	return precision_score(y_true=valid_true, y_pred=valid_pred, average="binary", pos_label=1)
 
 
 def token_recall(true_labels, pred_labels, pos_label: int = 1, ignore_label: int = -100):
@@ -14,7 +14,7 @@ def token_recall(true_labels, pred_labels, pos_label: int = 1, ignore_label: int
 
 	valid_true = true_labels[valid_mask] == pos_label
 	valid_pred = pred_labels[valid_mask] == pos_label
-	return recall_score(y_true=valid_true, y_pred=valid_pred, average="binary", pos_label=pos_label)
+	return recall_score(y_true=valid_true, y_pred=valid_pred, average="binary", pos_label=1)
 
 
 def token_f1(true_labels, pred_labels, pos_label: int = 1, ignore_label: int = -100):
@@ -22,7 +22,7 @@ def token_f1(true_labels, pred_labels, pos_label: int = 1, ignore_label: int = -
 
 	valid_true = true_labels[valid_mask] == pos_label
 	valid_pred = pred_labels[valid_mask] == pos_label
-	return f1_score(y_true=valid_true, y_pred=valid_pred, average="binary", pos_label=pos_label)
+	return f1_score(y_true=valid_true, y_pred=valid_pred, average="binary", pos_label=1)
 
 
 if __name__ == "__main__":
