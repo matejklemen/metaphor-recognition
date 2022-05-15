@@ -259,9 +259,9 @@ if __name__ == "__main__":
 			curr_dev_metric_verbose = []
 			for curr_label in POS_LABEL:
 				curr_label_str = ID2TAG[GENERAL_LABEL_SCHEME][curr_label]
-				dev_p = token_precision(dev_dataset.labels, dev_preds, pos_label=1)
-				dev_r = token_recall(dev_dataset.labels, dev_preds, pos_label=1)
-				dev_f1 = token_f1(dev_dataset.labels, dev_preds, pos_label=1)
+				dev_p = token_precision(dev_dataset.labels, dev_preds, pos_label=curr_label)
+				dev_r = token_recall(dev_dataset.labels, dev_preds, pos_label=curr_label)
+				dev_f1 = token_f1(dev_dataset.labels, dev_preds, pos_label=curr_label)
 				logging.info(f"[{curr_label_str}] dev P={dev_p:.3f}, R={dev_r:.3f}, F1={dev_f1:.3f}")
 
 				curr_dev_metric += dev_f1
