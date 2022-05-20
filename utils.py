@@ -1,3 +1,5 @@
+from typing import List
+
 from sklearn.metrics import precision_score, recall_score, f1_score
 
 
@@ -23,6 +25,32 @@ def token_f1(true_labels, pred_labels, pos_label: int = 1, ignore_label: int = -
 	valid_true = true_labels[valid_mask] == pos_label
 	valid_pred = pred_labels[valid_mask] == pos_label
 	return f1_score(y_true=valid_true, y_pred=valid_pred, average="binary", pos_label=1)
+
+
+def preprocess_iob2(labels: List[str], fallback_label: str = "O") -> List[str]:
+	""" Breaks up contiguous labels of the same type into beginning (B-)/inside(I-) labels. Keeps negative labels
+	as they are. """
+	pos, open_type = 0, None
+	prepr_labels = []
+
+	while pos < len(labels):
+		if labels[pos] != fallback_label:
+			if open_type is None:
+				prepr_labels.append(f"B-{labels[pos]}")
+				open_type = labels[pos]
+			else:
+				if labels[pos] == open_type:
+					prepr_labels.append(f"I-{labels[pos]}")
+				else:
+					prepr_labels.append(f"B-{labels[pos]}")
+					open_type = labels[pos]
+		else:
+			prepr_labels.append(labels[pos])
+			open_type = None
+
+		pos += 1
+
+	return prepr_labels
 
 
 if __name__ == "__main__":

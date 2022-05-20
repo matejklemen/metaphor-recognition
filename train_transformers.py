@@ -30,6 +30,7 @@ parser.add_argument("--test_path", type=str, default="data/test_data.tsv")
 parser.add_argument("--label_scheme", type=str, default="binary_2",
 					choices=["binary_1", "binary_2", "binary_3", "binary_4",
 							 "independent_1", "independent_2", "independent_3", "independent_4"])
+parser.add_argument("--iob2", action="store_true", help="Encode labels with IOB2 label scheme")
 
 parser.add_argument("--pretrained_name_or_path", type=str, default="EMBEDDIA/sloberta")
 parser.add_argument("--learning_rate", type=float, default=2e-5)
@@ -84,15 +85,24 @@ if __name__ == "__main__":
 	GENERAL_LABEL_SCHEME, NUM_LABELS = args.label_scheme.split("_")
 	NUM_LABELS = int(NUM_LABELS)
 
-	# TODO: iob2 will need to be handled somehow
 	POS_LABEL = []
 	FALLBACK_LABEL = None
+	# iob2 transforms each positive label into two labels, e.g., metaphor -> {B-metaphor, I-metaphor}
 	if GENERAL_LABEL_SCHEME == "binary":
-		POS_LABEL = [1]
 		FALLBACK_LABEL = "not_metaphor"
+		if args.iob2:
+			POS_LABEL = [1, 2]
+			GENERAL_LABEL_SCHEME = f"{GENERAL_LABEL_SCHEME}_iob2"
+		else:
+			POS_LABEL = [1]
+
 	elif GENERAL_LABEL_SCHEME == "independent":
-		POS_LABEL = list(range(1, 1 + NUM_LABELS))
 		FALLBACK_LABEL = "O"
+		if args.iob2:
+			POS_LABEL = list(range(1, 1 + NUM_LABELS * 2))
+			GENERAL_LABEL_SCHEME = f"{GENERAL_LABEL_SCHEME}_iob2"
+		else:
+			POS_LABEL = list(range(1, 1 + NUM_LABELS))
 
 	train_df = load_df(args.train_path)
 	dev_df = load_df(args.dev_path)
@@ -111,7 +121,8 @@ if __name__ == "__main__":
 	train_in, train_out = create_examples(train_df,
 										  encoding_scheme=TAG2ID[GENERAL_LABEL_SCHEME],
 										  history_prev_sents=args.history_prev_sents,
-										  fallback_label=FALLBACK_LABEL)
+										  fallback_label=FALLBACK_LABEL,
+										  iob2=args.iob2)
 
 	num_train = len(train_in)
 	enc_train_in = tokenizer(
@@ -163,7 +174,8 @@ if __name__ == "__main__":
 	dev_in, dev_out = create_examples(dev_df,
 									  encoding_scheme=TAG2ID[GENERAL_LABEL_SCHEME],
 									  history_prev_sents=args.history_prev_sents,
-									  fallback_label=FALLBACK_LABEL)
+									  fallback_label=FALLBACK_LABEL,
+									  iob2=args.iob2)
 
 	num_dev = len(dev_in)
 	enc_dev_in = tokenizer(

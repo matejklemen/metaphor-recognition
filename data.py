@@ -6,13 +6,18 @@ import numpy as np
 import pandas as pd
 from torch.utils.data import Dataset
 
+from utils import preprocess_iob2
+
 POS_MET_TYPES = ["MRWi", "MRWd", "WIDLI", "MFlag"]
 TAG2ID = {
 	"binary": {_tag: _i for _i, _tag in enumerate(["not_metaphor", "metaphor"])},
+	"binary_iob2": {_tag: _i for _i, _tag in enumerate(["not_metaphor"] + list(map(lambda tup: "".join(tup),
+																				   itertools.product(["B-", "I-"], ["metaphor"]))))},
 	"independent": {_tag: _i for _i, _tag in enumerate(["O"] + POS_MET_TYPES)},
-	"iob2": {_tag: _i for _i, _tag in enumerate(["O"] + list(map(lambda tup: "".join(tup),
-																 itertools.product(["B-", "I-"], POS_MET_TYPES))))}
+	"independent_iob2": {_tag: _i for _i, _tag in enumerate(["O"] + list(map(lambda tup: "".join(tup),
+																			 itertools.product(["B-", "I-"], POS_MET_TYPES))))}
 }
+
 ID2TAG = {curr_scheme: {_i: _tag for _tag, _i in TAG2ID[curr_scheme].items()} for curr_scheme in TAG2ID}
 # This is used to mark labels that should not be taken into account in loss calculation
 LOSS_IGNORE_INDEX = -100
@@ -71,17 +76,21 @@ def load_df(file_path) -> pd.DataFrame:
 
 def create_examples(df: pd.DataFrame, encoding_scheme: Dict[str, int],
 					history_prev_sents: int = 1,
-					fallback_label: Optional[str] = "O") -> Tuple[List, List]:
+					fallback_label: Optional[str] = "O",
+					iob2: bool = False) -> Tuple[List, List]:
 	"""
 	:param df:
 	:param encoding_scheme: dict
 	:param history_prev_sents: Number of previous sentences to take as context. Labels for this context are masked out
 	so that the model does not predict token labels multiple times.
 	:param fallback_label: Default negative label; used for unrecognized ("other") labels
+	:param iob2: Encode labels as starting, inside, or outside (B-/I-/O)
 	"""
 	assert history_prev_sents >= 0
 	examples_input = []
 	examples_labels = []
+
+	preprocess_labels = (lambda lbls: preprocess_iob2(lbls, fallback_label)) if iob2 else (lambda lbls: lbls)
 
 	for curr_doc, curr_df in df.groupby("document_name"):
 		sorted_order = np.argsort(curr_df["idx_sentence_glob"].values)
@@ -97,8 +106,10 @@ def create_examples(df: pd.DataFrame, encoding_scheme: Dict[str, int],
 			curr_tokens = tokens[-1]
 
 			curr_ex_tokens = history_tokens + curr_tokens
+
+			unencoded_labels = preprocess_labels(labels[-1])
 			curr_ex_labels = [-100] * len(history_tokens) + \
-							 list(map(lambda str_lbl: encoding_scheme.get(str_lbl, encoding_scheme[fallback_label]), labels[-1]))
+							 list(map(lambda str_lbl: encoding_scheme.get(str_lbl, encoding_scheme[fallback_label]), unencoded_labels))
 
 			assert len(curr_ex_tokens) == len(curr_ex_labels)
 
