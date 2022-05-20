@@ -40,6 +40,9 @@ class TransformersSeqDataset(Dataset):
 
 
 def transform_met_types(met_types: Iterable[Iterable[str]], label_scheme: str):
+	""" Converts metaphore type using chosen label scheme. label_scheme determines which labels are kept as positive
+	and how they are kept. See `TAG2ID` and `POS_MET_TYPES` in data.py to see priority.
+	"""
 	assert label_scheme in ["binary_1", "binary_2", "binary_3", "binary_4",
 							"independent_1", "independent_2", "independent_3", "independent_4"]
 	_, first_n = label_scheme.split("_")
@@ -63,6 +66,7 @@ def transform_met_types(met_types: Iterable[Iterable[str]], label_scheme: str):
 
 
 def load_df(file_path) -> pd.DataFrame:
+	""" Load data created using convert_komet.py. """
 	df = pd.read_csv(file_path, sep="\t")
 	if "sentence_words" in df.columns:
 		df["sentence_words"] = df["sentence_words"].apply(ast.literal_eval)
@@ -78,7 +82,8 @@ def create_examples(df: pd.DataFrame, encoding_scheme: Dict[str, int],
 					history_prev_sents: int = 1,
 					fallback_label: Optional[str] = "O",
 					iob2: bool = False) -> Tuple[List, List]:
-	"""
+	""" Creates examples (token inputs and token labels) out of data created using convert_komet.py.
+
 	:param df:
 	:param encoding_scheme: dict
 	:param history_prev_sents: Number of previous sentences to take as context. Labels for this context are masked out
