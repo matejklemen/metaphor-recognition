@@ -82,27 +82,25 @@ if __name__ == "__main__":
 	SUBSET_SIZE = args.validate_steps
 	STRIDE = args.max_length // 2 if args.stride is None else args.stride
 	# Convert from e.g., "binary_2" -> "binary", "2"
-	GENERAL_LABEL_SCHEME, NUM_LABELS = args.label_scheme.split("_")
+	TYPE_LABEL_SCHEME, NUM_LABELS = args.label_scheme.split("_")
+	PRIMARY_LABEL_SCHEME = TYPE_LABEL_SCHEME
+	SECONDARY_LABEL_SCHEME = TYPE_LABEL_SCHEME  # If IOB2 is used, holds the name of the non-IOB2 equivalent scheme
 	NUM_LABELS = int(NUM_LABELS)
 
 	POS_LABEL = []
 	FALLBACK_LABEL = None
 	# iob2 transforms each positive label into two labels, e.g., metaphor -> {B-metaphor, I-metaphor}
-	if GENERAL_LABEL_SCHEME == "binary":
+	if PRIMARY_LABEL_SCHEME == "binary":
 		FALLBACK_LABEL = "not_metaphor"
+		POS_LABEL = [1]
 		if args.iob2:
-			POS_LABEL = [1, 2]
-			GENERAL_LABEL_SCHEME = f"{GENERAL_LABEL_SCHEME}_iob2"
-		else:
-			POS_LABEL = [1]
+			PRIMARY_LABEL_SCHEME, SECONDARY_LABEL_SCHEME = f"{PRIMARY_LABEL_SCHEME}_iob2", PRIMARY_LABEL_SCHEME
 
-	elif GENERAL_LABEL_SCHEME == "independent":
+	elif PRIMARY_LABEL_SCHEME == "independent":
 		FALLBACK_LABEL = "O"
+		POS_LABEL = list(range(1, 1 + NUM_LABELS))
 		if args.iob2:
-			POS_LABEL = list(range(1, 1 + NUM_LABELS * 2))
-			GENERAL_LABEL_SCHEME = f"{GENERAL_LABEL_SCHEME}_iob2"
-		else:
-			POS_LABEL = list(range(1, 1 + NUM_LABELS))
+			PRIMARY_LABEL_SCHEME, SECONDARY_LABEL_SCHEME = f"{PRIMARY_LABEL_SCHEME}_iob2", PRIMARY_LABEL_SCHEME
 
 	train_df = load_df(args.train_path)
 	dev_df = load_df(args.dev_path)
@@ -110,7 +108,7 @@ if __name__ == "__main__":
 
 	tokenizer = AutoTokenizer.from_pretrained(args.pretrained_name_or_path)
 	model = AutoModelForTokenClassification.from_pretrained(args.pretrained_name_or_path,
-															num_labels=len(TAG2ID[GENERAL_LABEL_SCHEME])).to(DEVICE)
+															num_labels=len(TAG2ID[PRIMARY_LABEL_SCHEME])).to(DEVICE)
 	optimizer = optim.AdamW(model.parameters(), lr=args.learning_rate)
 
 	# ------------------------------------
@@ -119,7 +117,7 @@ if __name__ == "__main__":
 	train_df["met_type"] = transform_met_types(train_df["met_type"].tolist(), args.label_scheme)
 
 	train_in, train_out = create_examples(train_df,
-										  encoding_scheme=TAG2ID[GENERAL_LABEL_SCHEME],
+										  encoding_scheme=TAG2ID[PRIMARY_LABEL_SCHEME],
 										  history_prev_sents=args.history_prev_sents,
 										  fallback_label=FALLBACK_LABEL,
 										  iob2=args.iob2)
@@ -172,7 +170,7 @@ if __name__ == "__main__":
 	dev_df["met_type"] = transform_met_types(dev_df["met_type"].tolist(), args.label_scheme)
 
 	dev_in, dev_out = create_examples(dev_df,
-									  encoding_scheme=TAG2ID[GENERAL_LABEL_SCHEME],
+									  encoding_scheme=TAG2ID[PRIMARY_LABEL_SCHEME],
 									  history_prev_sents=args.history_prev_sents,
 									  fallback_label=FALLBACK_LABEL,
 									  iob2=args.iob2)
@@ -225,6 +223,33 @@ if __name__ == "__main__":
 
 	ts = time()
 	best_dev_metric, best_dev_metric_verbose = 0.0, None
+
+	dev_gt = {"token_labels": dev_dataset.labels, "metaphore_bounds": None}
+	if args.iob2:
+		# Convert IOB2 to independent labels (remove B-, I-) for evaluation
+		independent_labels = []
+		for idx_dev in range(dev_dataset.labels.shape[0]):
+			curr_labels = dev_dataset.labels[idx_dev]
+			curr_processed = []
+			for _lbl in curr_labels.tolist():
+				if _lbl == -100:
+					curr_processed.append(_lbl)
+				else:
+					str_tag = ID2TAG[PRIMARY_LABEL_SCHEME][_lbl]
+					if str_tag == FALLBACK_LABEL:
+						curr_processed.append(TAG2ID[SECONDARY_LABEL_SCHEME][str_tag])
+					else:
+						curr_processed.append(TAG2ID[SECONDARY_LABEL_SCHEME][str_tag[2:]])  # without "B-" or "I-"
+
+			independent_labels.append(curr_processed)
+
+		independent_labels = torch.tensor(independent_labels)
+		assert independent_labels.shape == dev_gt["token_labels"].shape
+		dev_gt["token_labels"] = independent_labels
+
+		# TODO: extract boundaries of metaphors Set([(i_start, i_end), ...]) for entity-level evaluation
+		# ...
+
 	num_train_subsets = (len(train_dataset) + SUBSET_SIZE - 1) // SUBSET_SIZE
 	for idx_epoch in range(args.num_epochs):
 		logging.info(f"Epoch #{1 + idx_epoch}/{args.num_epochs}")
@@ -266,14 +291,37 @@ if __name__ == "__main__":
 
 			dev_preds = torch.cat(dev_preds)
 
+			# TODO: "entity"-level metrics
+			if args.iob2:
+				# Convert IOB2 to independent labels (remove B-, I-) for evaluation
+				independent_labels = []
+				for idx_dev in range(dev_preds.shape[0]):
+					curr_labels = dev_preds[idx_dev]
+					curr_processed = []
+					for _lbl in curr_labels.tolist():
+						if _lbl == -100:
+							curr_processed.append(_lbl)
+						else:
+							str_tag = ID2TAG[PRIMARY_LABEL_SCHEME][_lbl]
+							if str_tag == FALLBACK_LABEL:
+								curr_processed.append(TAG2ID[SECONDARY_LABEL_SCHEME][str_tag])
+							else:
+								curr_processed.append(TAG2ID[SECONDARY_LABEL_SCHEME][str_tag[2:]])  # without "B-" or "I-"
+
+					independent_labels.append(curr_processed)
+
+				independent_labels = torch.tensor(independent_labels)
+				assert independent_labels.shape == dev_preds.shape
+				dev_preds = independent_labels
+
 			logging.info(f"Dev loss: {dev_loss / num_dev_batches: .4f}")
 			curr_dev_metric = 0.0
 			curr_dev_metric_verbose = []
 			for curr_label in POS_LABEL:
-				curr_label_str = ID2TAG[GENERAL_LABEL_SCHEME][curr_label]
-				dev_p = token_precision(dev_dataset.labels, dev_preds, pos_label=curr_label)
-				dev_r = token_recall(dev_dataset.labels, dev_preds, pos_label=curr_label)
-				dev_f1 = token_f1(dev_dataset.labels, dev_preds, pos_label=curr_label)
+				curr_label_str = ID2TAG[SECONDARY_LABEL_SCHEME][curr_label]
+				dev_p = token_precision(dev_gt["token_labels"], dev_preds, pos_label=curr_label)
+				dev_r = token_recall(dev_gt["token_labels"], dev_preds, pos_label=curr_label)
+				dev_f1 = token_f1(dev_gt["token_labels"], dev_preds, pos_label=curr_label)
 				logging.info(f"[{curr_label_str}] dev P={dev_p:.3f}, R={dev_r:.3f}, F1={dev_f1:.3f}")
 
 				curr_dev_metric += dev_f1
