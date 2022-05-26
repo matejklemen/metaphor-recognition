@@ -80,7 +80,7 @@ if __name__ == "__main__":
 	PRIMARY_LABEL_SCHEME = TYPE_LABEL_SCHEME
 	SECONDARY_LABEL_SCHEME = TYPE_LABEL_SCHEME  # If IOB2 is used, holds the name of the non-IOB2 equivalent scheme
 	NUM_LABELS = int(NUM_LABELS)
-	wandb.init(project="metaphor-detection", config=vars(args))
+	wandb.init(project="metaphor-detection-komet", config=vars(args))
 
 	# iob2 transforms each positive label into two labels, e.g., metaphor -> {B-metaphor, I-metaphor}
 	FALLBACK_LABEL = "O"
