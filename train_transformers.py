@@ -1,21 +1,15 @@
 import argparse
 import json
+import logging
 import os.path
 import sys
-from time import time
 
 import numpy as np
 import torch
-import torch.optim as optim
-from torch.utils.data import Subset, DataLoader
-from tqdm import tqdm
 from transformers import AutoTokenizer, AutoModelForTokenClassification
 
-from data import load_df, create_examples, TAG2ID, LOSS_IGNORE_INDEX, TransformersSeqDataset, ID2TAG, \
-	transform_met_types
-from utils import token_precision, token_recall, token_f1
-
-import logging
+from base import MetaphorController
+from data import load_df, create_examples, TAG2ID, LOSS_IGNORE_INDEX, TransformersSeqDataset, transform_met_types
 
 parser = argparse.ArgumentParser()
 parser.add_argument("--model_dir", type=str, default="debug")
@@ -78,8 +72,6 @@ if __name__ == "__main__":
 		np.random.seed(args.random_seed)
 
 	DEVICE = torch.device("cpu") if args.use_cpu else torch.device("cuda")
-	DEV_BATCH_SIZE = 2 * args.batch_size  # no grad computation
-	SUBSET_SIZE = args.validate_steps
 	STRIDE = args.max_length // 2 if args.stride is None else args.stride
 	# Convert from e.g., "binary_2" -> "binary", "2"
 	TYPE_LABEL_SCHEME, NUM_LABELS = args.label_scheme.split("_")
@@ -87,20 +79,15 @@ if __name__ == "__main__":
 	SECONDARY_LABEL_SCHEME = TYPE_LABEL_SCHEME  # If IOB2 is used, holds the name of the non-IOB2 equivalent scheme
 	NUM_LABELS = int(NUM_LABELS)
 
-	POS_LABEL = []
-	FALLBACK_LABEL = None
 	# iob2 transforms each positive label into two labels, e.g., metaphor -> {B-metaphor, I-metaphor}
+	FALLBACK_LABEL = "O"
 	if PRIMARY_LABEL_SCHEME == "binary":
 		FALLBACK_LABEL = "not_metaphor"
-		POS_LABEL = [1]
-		if args.iob2:
-			PRIMARY_LABEL_SCHEME, SECONDARY_LABEL_SCHEME = f"{PRIMARY_LABEL_SCHEME}_iob2", PRIMARY_LABEL_SCHEME
-
 	elif PRIMARY_LABEL_SCHEME == "independent":
 		FALLBACK_LABEL = "O"
-		POS_LABEL = list(range(1, 1 + NUM_LABELS))
-		if args.iob2:
-			PRIMARY_LABEL_SCHEME, SECONDARY_LABEL_SCHEME = f"{PRIMARY_LABEL_SCHEME}_iob2", PRIMARY_LABEL_SCHEME
+
+	if args.iob2:
+		PRIMARY_LABEL_SCHEME, SECONDARY_LABEL_SCHEME = f"{PRIMARY_LABEL_SCHEME}_iob2", PRIMARY_LABEL_SCHEME
 
 	train_df = load_df(args.train_path)
 	dev_df = load_df(args.dev_path)
@@ -109,7 +96,13 @@ if __name__ == "__main__":
 	tokenizer = AutoTokenizer.from_pretrained(args.pretrained_name_or_path)
 	model = AutoModelForTokenClassification.from_pretrained(args.pretrained_name_or_path,
 															num_labels=len(TAG2ID[PRIMARY_LABEL_SCHEME])).to(DEVICE)
-	optimizer = optim.AdamW(model.parameters(), lr=args.learning_rate)
+	controller = MetaphorController(
+		model_dir=args.model_dir,
+		label_scheme=PRIMARY_LABEL_SCHEME, tokenizer_or_tokenizer_name=tokenizer, model_or_model_name=model,
+		learning_rate=args.learning_rate, batch_size=args.batch_size,
+		validate_every_n_examples=args.validate_steps, optimized_metric="f1_macro",
+		device=("cpu" if args.use_cpu else "cuda")
+	)
 
 	# ------------------------------------
 
@@ -216,123 +209,7 @@ if __name__ == "__main__":
 	enc_dev_in["labels"] = torch.tensor(enc_dev_out)
 	del enc_dev_in["overflow_to_sample_mapping"]
 	dev_dataset = TransformersSeqDataset(**enc_dev_in)
-	num_dev_batches = (len(dev_dataset) + DEV_BATCH_SIZE - 1) // DEV_BATCH_SIZE
 
 	# ------------------------------------
 	logging.info(f"Loaded {len(train_dataset)} train examples, {len(dev_dataset)} dev examples")
-
-	ts = time()
-	best_dev_metric, best_dev_metric_verbose = 0.0, None
-
-	dev_gt = {"token_labels": dev_dataset.labels, "metaphore_bounds": None}
-	if args.iob2:
-		# Convert IOB2 to independent labels (remove B-, I-) for evaluation
-		independent_labels = []
-		for idx_dev in range(dev_dataset.labels.shape[0]):
-			curr_labels = dev_dataset.labels[idx_dev]
-			curr_processed = []
-			for _lbl in curr_labels.tolist():
-				if _lbl == -100:
-					curr_processed.append(_lbl)
-				else:
-					str_tag = ID2TAG[PRIMARY_LABEL_SCHEME][_lbl]
-					if str_tag == FALLBACK_LABEL:
-						curr_processed.append(TAG2ID[SECONDARY_LABEL_SCHEME][str_tag])
-					else:
-						curr_processed.append(TAG2ID[SECONDARY_LABEL_SCHEME][str_tag[2:]])  # without "B-" or "I-"
-
-			independent_labels.append(curr_processed)
-
-		independent_labels = torch.tensor(independent_labels)
-		assert independent_labels.shape == dev_gt["token_labels"].shape
-		dev_gt["token_labels"] = independent_labels
-
-		# TODO: extract boundaries of metaphors Set([(i_start, i_end), ...]) for entity-level evaluation
-		# ...
-
-	num_train_subsets = (len(train_dataset) + SUBSET_SIZE - 1) // SUBSET_SIZE
-	for idx_epoch in range(args.num_epochs):
-		logging.info(f"Epoch #{1 + idx_epoch}/{args.num_epochs}")
-		train_loss, nb = 0.0, 0
-
-		rand_indices = torch.randperm(num_train)
-		for idx_subset in range(num_train_subsets):
-			s_sub, e_sub = idx_subset * SUBSET_SIZE, (idx_subset + 1) * SUBSET_SIZE
-			curr_sub = Subset(train_dataset, rand_indices[s_sub: e_sub])
-
-			model.train()
-			for curr_batch_cpu in tqdm(DataLoader(curr_sub, batch_size=args.batch_size)):
-				curr_batch = {_k: _v.to(DEVICE) for _k, _v in curr_batch_cpu.items()}
-
-				res = model(**curr_batch)
-				loss = res["loss"]
-
-				train_loss += float(loss)
-				nb += 1
-
-				loss.backward()
-				optimizer.step()
-				optimizer.zero_grad()
-
-			logging.info(f"Training loss: {train_loss / nb: .4f}")
-
-			dev_loss = 0.0
-			dev_preds = []
-			with torch.no_grad():
-				model.eval()
-				for curr_batch_cpu in tqdm(DataLoader(dev_dataset, batch_size=DEV_BATCH_SIZE)):
-					curr_batch = {_k: _v.to(DEVICE) for _k, _v in curr_batch_cpu.items()}
-
-					res = model(**curr_batch)
-					preds = torch.argmax(torch.softmax(res["logits"], dim=-1), dim=-1).cpu()
-
-					dev_loss += float(res["loss"])
-					dev_preds.append(preds)
-
-			dev_preds = torch.cat(dev_preds)
-
-			# TODO: "entity"-level metrics
-			if args.iob2:
-				# Convert IOB2 to independent labels (remove B-, I-) for evaluation
-				independent_labels = []
-				for idx_dev in range(dev_preds.shape[0]):
-					curr_labels = dev_preds[idx_dev]
-					curr_processed = []
-					for _lbl in curr_labels.tolist():
-						if _lbl == -100:
-							curr_processed.append(_lbl)
-						else:
-							str_tag = ID2TAG[PRIMARY_LABEL_SCHEME][_lbl]
-							if str_tag == FALLBACK_LABEL:
-								curr_processed.append(TAG2ID[SECONDARY_LABEL_SCHEME][str_tag])
-							else:
-								curr_processed.append(TAG2ID[SECONDARY_LABEL_SCHEME][str_tag[2:]])  # without "B-" or "I-"
-
-					independent_labels.append(curr_processed)
-
-				independent_labels = torch.tensor(independent_labels)
-				assert independent_labels.shape == dev_preds.shape
-				dev_preds = independent_labels
-
-			logging.info(f"Dev loss: {dev_loss / num_dev_batches: .4f}")
-			curr_dev_metric = 0.0
-			curr_dev_metric_verbose = []
-			for curr_label in POS_LABEL:
-				curr_label_str = ID2TAG[SECONDARY_LABEL_SCHEME][curr_label]
-				dev_p = token_precision(dev_gt["token_labels"], dev_preds, pos_label=curr_label)
-				dev_r = token_recall(dev_gt["token_labels"], dev_preds, pos_label=curr_label)
-				dev_f1 = token_f1(dev_gt["token_labels"], dev_preds, pos_label=curr_label)
-				logging.info(f"[{curr_label_str}] dev P={dev_p:.3f}, R={dev_r:.3f}, F1={dev_f1:.3f}")
-
-				curr_dev_metric += dev_f1
-				curr_dev_metric_verbose.append(f"[{curr_label_str}] dev P={dev_p:.3f}, R={dev_r:.3f}, F1={dev_f1:.3f}")
-
-			curr_dev_metric /= max(len(POS_LABEL), 1)
-			if curr_dev_metric > best_dev_metric:
-				logging.info(f"NEW BEST dev metric!")
-				best_dev_metric = curr_dev_metric
-				best_dev_metric_verbose = curr_dev_metric_verbose
-
-	logging.info(f"Training finished. Took {time() - ts:.3f}s")
-	logging.info(f"Best validation metric: {best_dev_metric:.3f}")
-	logging.info("Best validation metric (verbose):\n{}".format("\n".join(best_dev_metric_verbose)))
+	controller.run_training(train_dataset, dev_dataset, num_epochs=args.num_epochs)

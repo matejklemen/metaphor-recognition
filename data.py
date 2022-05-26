@@ -18,9 +18,13 @@ TAG2ID = {
 																			 itertools.product(["B-", "I-"], POS_MET_TYPES))))}
 }
 
+SCHEME_CONVERSION = {"binary_iob2": "binary", "independent_iob2": "independent"}
+
 ID2TAG = {curr_scheme: {_i: _tag for _tag, _i in TAG2ID[curr_scheme].items()} for curr_scheme in TAG2ID}
 # This is used to mark labels that should not be taken into account in loss calculation
 LOSS_IGNORE_INDEX = -100
+# IMPORTANT: Assuming fallback label is encoded with 0 in every label scheme
+FALLBACK_LABEL_INDEX = 0
 
 
 class TransformersSeqDataset(Dataset):
