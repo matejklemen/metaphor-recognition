@@ -6,7 +6,7 @@ import wandb
 from torch import optim
 from torch.utils.data import Subset, DataLoader
 from tqdm import tqdm
-from transformers import AutoModel, AutoTokenizer
+from transformers import AutoTokenizer, AutoModelForTokenClassification
 
 from data import SCHEME_CONVERSION, TAG2ID, ID2TAG, FALLBACK_LABEL_INDEX
 from utils import token_precision, token_recall, token_f1
@@ -49,7 +49,7 @@ class MetaphorController:
 			logging.info(f"Model was provided pre-loaded - it is assumed that the settings are pre-set.")
 			self.model = model_or_model_name
 		else:
-			self.model = AutoModel.from_pretrained(model_or_model_name, num_labels=self.num_labels)
+			self.model = AutoModelForTokenClassification.from_pretrained(model_or_model_name, num_labels=self.num_labels)
 
 		self.model = self.model.to(self.device)
 		self.optimizer = optim.AdamW(params=self.model.parameters(), lr=self.learning_rate)
@@ -159,7 +159,7 @@ class MetaphorController:
 		wandb.summary[f"best_dev_{self.optimized_metric}"] = best_dev_metric
 
 		# Reload best saved model
-		self.model = AutoModel.from_pretrained(self.model_dir).to(self.device)
+		self.model = AutoModelForTokenClassification.from_pretrained(self.model_dir).to(self.device)
 
 	def compute_metrics(self, true_labels, predicted_labels):
 		metrics = {}
