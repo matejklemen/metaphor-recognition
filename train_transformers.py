@@ -6,6 +6,7 @@ import sys
 
 import numpy as np
 import torch
+import wandb
 from transformers import AutoTokenizer, AutoModelForTokenClassification
 
 from base import MetaphorController
@@ -42,6 +43,7 @@ parser.add_argument("--random_seed", type=int, default=None)
 parser.add_argument("--use_cpu", action="store_true")
 
 if __name__ == "__main__":
+	wandb.init(project="metaphor-detection")
 	args = parser.parse_args()
 
 	if not os.path.exists(args.model_dir):
@@ -73,6 +75,7 @@ if __name__ == "__main__":
 
 	DEVICE = torch.device("cpu") if args.use_cpu else torch.device("cuda")
 	STRIDE = args.max_length // 2 if args.stride is None else args.stride
+	args.stride = STRIDE
 	# Convert from e.g., "binary_2" -> "binary", "2"
 	TYPE_LABEL_SCHEME, NUM_LABELS = args.label_scheme.split("_")
 	PRIMARY_LABEL_SCHEME = TYPE_LABEL_SCHEME
@@ -212,4 +215,6 @@ if __name__ == "__main__":
 
 	# ------------------------------------
 	logging.info(f"Loaded {len(train_dataset)} train examples, {len(dev_dataset)} dev examples")
+	wandb.config = vars(args)
 	controller.run_training(train_dataset, dev_dataset, num_epochs=args.num_epochs)
+	wandb.finish()

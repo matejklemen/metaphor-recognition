@@ -2,6 +2,7 @@ import logging
 from time import time
 
 import torch
+import wandb
 from torch import optim
 from torch.utils.data import Subset, DataLoader
 from tqdm import tqdm
@@ -42,6 +43,7 @@ class MetaphorController:
 			self.tokenizer = tokenizer_or_tokenizer_name
 		else:
 			self.tokenizer = AutoTokenizer.from_pretrained(tokenizer_or_tokenizer_name)
+		self.tokenizer.save_pretrained(self.model_dir)
 
 		if not isinstance(model_or_model_name, str):
 			logging.info(f"Model was provided pre-loaded - it is assumed that the settings are pre-set.")
@@ -99,7 +101,7 @@ class MetaphorController:
 				train_loss += train_res["loss"]
 				nb += train_res["num_batches"]
 
-				logging.info(f"Train loss: {train_loss / max(1, nb):.4f}")
+				logging.info(f"[Train] loss: {train_loss / max(1, nb):.4f}")
 
 				# Skip evaluation on dev set if no dev set is provided or if training on small leftover training subset
 				if num_dev == 0 or len(curr_sub) < max_subset_size // 2:
@@ -142,16 +144,19 @@ class MetaphorController:
 					curr_dev_metrics_verbose.append(f"{metric_name} = {metric_val:.4f}")
 				curr_dev_metrics_verbose = "[Dev metrics] {}".format(", ".join(curr_dev_metrics_verbose))
 				logging.info(curr_dev_metrics_verbose)
+				wandb.log(curr_dev_metrics)
 
 				curr_dev_metric = curr_dev_metrics[self.optimized_metric]
 				if curr_dev_metric > best_dev_metric:
 					logging.info(f"NEW BEST dev metric!")
 					best_dev_metric = curr_dev_metric
 					best_dev_metric_verbose = curr_dev_metrics_verbose
+					self.model.save_pretrained(self.model_dir)
 
 		logging.info(f"Training finished. Took {time() - ts:.4f}s")
 		logging.info(f"Best validation metric: {best_dev_metric:.4f}")
 		logging.info(best_dev_metric_verbose)
+		wandb.summary[f"best_dev_{self.optimized_metric}"] = best_dev_metric
 
 		# Reload best saved model
 		self.model = AutoModel.from_pretrained(self.model_dir).to(self.device)
