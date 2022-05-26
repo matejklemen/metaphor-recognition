@@ -43,7 +43,6 @@ parser.add_argument("--random_seed", type=int, default=None)
 parser.add_argument("--use_cpu", action="store_true")
 
 if __name__ == "__main__":
-	wandb.init(project="metaphor-detection")
 	args = parser.parse_args()
 
 	if not os.path.exists(args.model_dir):
@@ -215,6 +214,6 @@ if __name__ == "__main__":
 
 	# ------------------------------------
 	logging.info(f"Loaded {len(train_dataset)} train examples, {len(dev_dataset)} dev examples")
-	wandb.config = vars(args)
+	wandb.init(project="metaphor-detection", config=vars(args))
 	controller.run_training(train_dataset, dev_dataset, num_epochs=args.num_epochs)
 	wandb.finish()
