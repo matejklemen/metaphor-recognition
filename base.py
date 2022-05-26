@@ -59,6 +59,7 @@ class MetaphorController:
 		if dev_dataset is not None:
 			# TODO: extract boundaries of metaphors Set([(i_start, i_end), ...]) for entity-level evaluation?
 			dev_gt = {"token_labels": dev_dataset.labels}
+			num_dev = len(dev_dataset)
 			if self.iob2:
 				# Convert IOB2 to independent labels (remove B-, I-) for evaluation
 				independent_labels = []
