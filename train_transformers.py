@@ -80,6 +80,7 @@ if __name__ == "__main__":
 	PRIMARY_LABEL_SCHEME = TYPE_LABEL_SCHEME
 	SECONDARY_LABEL_SCHEME = TYPE_LABEL_SCHEME  # If IOB2 is used, holds the name of the non-IOB2 equivalent scheme
 	NUM_LABELS = int(NUM_LABELS)
+	wandb.init(project="metaphor-detection", config=vars(args))
 
 	# iob2 transforms each positive label into two labels, e.g., metaphor -> {B-metaphor, I-metaphor}
 	FALLBACK_LABEL = "O"
@@ -214,6 +215,5 @@ if __name__ == "__main__":
 
 	# ------------------------------------
 	logging.info(f"Loaded {len(train_dataset)} train examples, {len(dev_dataset)} dev examples")
-	wandb.init(project="metaphor-detection", config=vars(args))
 	controller.run_training(train_dataset, dev_dataset, num_epochs=args.num_epochs)
 	wandb.finish()
