@@ -40,6 +40,7 @@ parser.add_argument("--num_epochs", type=int, default=10)
 parser.add_argument("--validate_steps", type=int, default=3000)
 
 parser.add_argument("--random_seed", type=int, default=None)
+parser.add_argument("--wandb_project_name", type=str, default="metaphor-detection-komet")
 parser.add_argument("--use_cpu", action="store_true")
 
 if __name__ == "__main__":
@@ -80,7 +81,7 @@ if __name__ == "__main__":
 	PRIMARY_LABEL_SCHEME = TYPE_LABEL_SCHEME
 	SECONDARY_LABEL_SCHEME = TYPE_LABEL_SCHEME  # If IOB2 is used, holds the name of the non-IOB2 equivalent scheme
 	NUM_LABELS = int(NUM_LABELS)
-	wandb.init(project="metaphor-detection-komet", config=vars(args))
+	wandb.init(project=args.wandb_project_name, config=vars(args))
 
 	# iob2 transforms each positive label into two labels, e.g., metaphor -> {B-metaphor, I-metaphor}
 	FALLBACK_LABEL = "O"
