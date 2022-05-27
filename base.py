@@ -60,7 +60,7 @@ class MetaphorController:
 		dev_gt = {}
 		if dev_dataset is not None:
 			# TODO: extract boundaries of metaphors Set([(i_start, i_end), ...]) for entity-level evaluation?
-			dev_gt = {"token_labels": dev_dataset.labels}
+			dev_gt = {"word_labels": dev_dataset.labels}
 			num_dev = len(dev_dataset)
 			if self.iob2:
 				# Convert IOB2 to independent labels (remove B-, I-) for evaluation
@@ -82,7 +82,9 @@ class MetaphorController:
 
 				independent_labels = torch.tensor(independent_labels)
 				assert independent_labels.shape == dev_dataset.labels.shape
-				dev_gt["token_labels"] = independent_labels
+				dev_gt["word_labels"] = independent_labels
+
+			dev_gt["word_labels"] = torch.tensor(dev_dataset.align_word_predictions(dev_dataset.labels, pad=True))
 
 		best_dev_metric, best_dev_metric_verbose = 0.0, None
 		max_subset_size = self.validate_every_n_examples
@@ -133,6 +135,8 @@ class MetaphorController:
 					independent_labels = torch.tensor(independent_labels)
 					assert independent_labels.shape == dev_preds.shape
 					dev_preds = independent_labels
+
+				dev_preds = torch.tensor(dev_dataset.align_word_predictions(dev_preds, pad=True))
 
 				curr_dev_metrics = self.compute_metrics(true_labels=dev_gt["token_labels"],
 														predicted_labels=dev_preds)

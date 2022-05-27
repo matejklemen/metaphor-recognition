@@ -113,11 +113,13 @@ if __name__ == "__main__":
 	orig_train_lbls = train_df["met_type"].tolist()
 	train_df["met_type"] = transform_met_types(train_df["met_type"].tolist(), args.label_scheme)
 
-	train_in, train_out = create_examples(train_df,
-										  encoding_scheme=TAG2ID[PRIMARY_LABEL_SCHEME],
-										  history_prev_sents=args.history_prev_sents,
-										  fallback_label=FALLBACK_LABEL,
-										  iob2=args.iob2)
+	train_examples = create_examples(train_df,
+									 encoding_scheme=TAG2ID[PRIMARY_LABEL_SCHEME],
+									 history_prev_sents=args.history_prev_sents,
+									 fallback_label=FALLBACK_LABEL,
+									 iob2=args.iob2)
+	train_in, train_out, train_in_words = \
+		train_examples["input"], train_examples["output"], train_examples["input_words"]
 
 	num_train = len(train_in)
 	enc_train_in = tokenizer(
@@ -128,10 +130,13 @@ if __name__ == "__main__":
 	)
 
 	is_start_encountered = np.zeros(num_train, dtype=bool)
+	subsample_to_sample, subword_to_word = [], []
 	enc_train_out = []
 	for idx_ex, (curr_input_ids, idx_orig_ex) in enumerate(zip(enc_train_in["input_ids"],
 															   enc_train_in["overflow_to_sample_mapping"])):
+		subsample_to_sample.append(int(idx_orig_ex))
 		curr_word_ids = enc_train_in.word_ids(idx_ex)
+		curr_word_ids_shuf = []
 
 		# where does sequence actually start, i.e. after <bos>
 		nonspecial_start = 0
@@ -147,16 +152,25 @@ if __name__ == "__main__":
 
 		fixed_out = []
 		fixed_out += [LOSS_IGNORE_INDEX] * (nonspecial_start + ignore_n_overlapping)
+		curr_word_ids_shuf.extend([None] * (nonspecial_start + ignore_n_overlapping))
 
 		for idx_subw, w_id in enumerate(curr_word_ids[(nonspecial_start + ignore_n_overlapping):],
 										start=(nonspecial_start + ignore_n_overlapping)):
 			if curr_word_ids[idx_subw] is None:
 				fixed_out.append(LOSS_IGNORE_INDEX)
+				curr_word_ids_shuf.append(None)
 			else:
 				fixed_out.append(train_out[idx_orig_ex][w_id])
+				if train_out[idx_orig_ex][w_id] == LOSS_IGNORE_INDEX:
+					curr_word_ids_shuf.append(None)
+				else:
+					curr_word_ids_shuf.append(w_id)
 
 		enc_train_out.append(fixed_out)
+		subword_to_word.append(curr_word_ids_shuf)
 
+	enc_train_in["subsample_to_sample"] = subsample_to_sample
+	enc_train_in["subword_to_word"] = subword_to_word
 	enc_train_in["labels"] = torch.tensor(enc_train_out)
 	del enc_train_in["overflow_to_sample_mapping"]
 	train_dataset = TransformersSeqDataset(**enc_train_in)
@@ -166,11 +180,13 @@ if __name__ == "__main__":
 	orig_dev_lbls = dev_df["met_type"].tolist()
 	dev_df["met_type"] = transform_met_types(dev_df["met_type"].tolist(), args.label_scheme)
 
-	dev_in, dev_out = create_examples(dev_df,
-									  encoding_scheme=TAG2ID[PRIMARY_LABEL_SCHEME],
-									  history_prev_sents=args.history_prev_sents,
-									  fallback_label=FALLBACK_LABEL,
-									  iob2=args.iob2)
+	dev_examples = create_examples(dev_df,
+								   encoding_scheme=TAG2ID[PRIMARY_LABEL_SCHEME],
+								   history_prev_sents=args.history_prev_sents,
+								   fallback_label=FALLBACK_LABEL,
+								   iob2=args.iob2)
+	dev_in, dev_out, dev_in_words = \
+		dev_examples["input"], dev_examples["output"], dev_examples["input_words"]
 
 	num_dev = len(dev_in)
 	enc_dev_in = tokenizer(
@@ -181,10 +197,13 @@ if __name__ == "__main__":
 	)
 
 	is_start_encountered = np.zeros(num_dev, dtype=bool)
+	subsample_to_sample, subword_to_word = [], []
 	enc_dev_out = []
 	for idx_ex, (curr_input_ids, idx_orig_ex) in enumerate(zip(enc_dev_in["input_ids"],
 															   enc_dev_in["overflow_to_sample_mapping"])):
+		subsample_to_sample.append(int(idx_orig_ex))
 		curr_word_ids = enc_dev_in.word_ids(idx_ex)
+		curr_word_ids_shuf = []
 
 		# where does sequence actually start, i.e. after <bos>
 		nonspecial_start = 0
@@ -200,16 +219,25 @@ if __name__ == "__main__":
 
 		fixed_out = []
 		fixed_out += [LOSS_IGNORE_INDEX] * (nonspecial_start + ignore_n_overlapping)
+		curr_word_ids_shuf.extend([None] * (nonspecial_start + ignore_n_overlapping))
 
 		for idx_subw, w_id in enumerate(curr_word_ids[(nonspecial_start + ignore_n_overlapping):],
 										start=(nonspecial_start + ignore_n_overlapping)):
 			if curr_word_ids[idx_subw] is None:
 				fixed_out.append(LOSS_IGNORE_INDEX)
+				curr_word_ids_shuf.append(None)
 			else:
 				fixed_out.append(dev_out[idx_orig_ex][w_id])
+				if dev_out[idx_orig_ex][w_id] == LOSS_IGNORE_INDEX:
+					curr_word_ids_shuf.append(None)
+				else:
+					curr_word_ids_shuf.append(w_id)
 
 		enc_dev_out.append(fixed_out)
+		subword_to_word.append(curr_word_ids_shuf)
 
+	enc_dev_in["subsample_to_sample"] = subsample_to_sample
+	enc_dev_in["subword_to_word"] = subword_to_word
 	enc_dev_in["labels"] = torch.tensor(enc_dev_out)
 	del enc_dev_in["overflow_to_sample_mapping"]
 	dev_dataset = TransformersSeqDataset(**enc_dev_in)

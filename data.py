@@ -29,18 +29,60 @@ FALLBACK_LABEL_INDEX = 0
 
 class TransformersSeqDataset(Dataset):
 	def __init__(self, **kwargs):
+		self.metadata_attrs = ["subsample_to_sample", "subword_to_word"]
 		self.valid_attrs = []
 		for attr, values in kwargs.items():
-			self.valid_attrs.append(attr)
+			if attr not in self.metadata_attrs:
+				self.valid_attrs.append(attr)
 			setattr(self, attr, values)
 
 		assert len(self.valid_attrs) > 0
+		# Need for alignment of "subsamples" to samples
+		assert all(hasattr(self, _attr_name) for _attr_name in ["subsample_to_sample", "subword_to_word"])
+		self.num_unique_samples = len(set(kwargs["subsample_to_sample"]))
+
+		self.num_words_in_sample = [0 for _ in range(self.num_unique_samples)]
+		for idx_sample, word_indices in zip(getattr(self, "subsample_to_sample"),
+											getattr(self, "subword_to_word")):
+			curr_max = self.num_words_in_sample[idx_sample]
+			self.num_words_in_sample[idx_sample] = max(curr_max,
+													   1 + max(filter(lambda w_id: w_id is not None, word_indices), default=-1))
 
 	def __getitem__(self, item):
 		return {k: getattr(self, k)[item] for k in self.valid_attrs}
 
 	def __len__(self):
 		return len(getattr(self, self.valid_attrs[0]))
+
+	def align_word_predictions(self, preds, pad=False) -> List[int]:
+		""" Converts potentially broken up and partially repeating (overlapping) predictions to word-level predictions."""
+		converted_preds = [[None for _ in range(self.num_words_in_sample[idx_sample])]
+						   for idx_sample in range(self.num_unique_samples)]
+
+		subsample_to_sample = getattr(self, "subsample_to_sample")
+		subword_to_word = getattr(self, "subword_to_word")
+		for idx_subsample in range(preds.shape[0]):
+			idx_sample = subsample_to_sample[idx_subsample]
+			word_indices = subword_to_word[idx_subsample]
+			curr_preds = preds[idx_subsample]
+
+			assert len(word_indices) == len(curr_preds)
+			for i, w_id in enumerate(word_indices):
+				if w_id is None:
+					continue
+
+				# Prediction of first subword is assigned to be the prediction of word
+				if converted_preds[idx_sample][w_id] is None:
+					converted_preds[idx_sample][w_id] = curr_preds[i].item()
+
+		converted_preds = [list(filter(lambda _w_id: _w_id is not None, _curr_preds)) for _curr_preds in converted_preds]
+
+		if pad:
+			max_words = max(map(lambda word_preds: len(word_preds), converted_preds))
+			converted_preds = [_curr_preds + [LOSS_IGNORE_INDEX] * (max_words - len(_curr_preds))
+							   for _curr_preds in converted_preds]
+
+		return converted_preds
 
 
 def transform_met_types(met_types: Iterable[Iterable[str]], label_scheme: str):
@@ -85,7 +127,7 @@ def load_df(file_path) -> pd.DataFrame:
 def create_examples(df: pd.DataFrame, encoding_scheme: Dict[str, int],
 					history_prev_sents: int = 1,
 					fallback_label: Optional[str] = "O",
-					iob2: bool = False) -> Tuple[List, List]:
+					iob2: bool = False) -> Dict[str, List]:
 	""" Creates examples (token inputs and token labels) out of data created using convert_komet.py.
 
 	:param df:
@@ -95,9 +137,11 @@ def create_examples(df: pd.DataFrame, encoding_scheme: Dict[str, int],
 	:param fallback_label: Default negative label; used for unrecognized ("other") labels
 	:param iob2: Encode labels as starting, inside, or outside (B-/I-/O)
 	"""
+	# TODO: this needs to be adapted for the case where no labels are given
 	assert history_prev_sents >= 0
 	examples_input = []
 	examples_labels = []
+	examples_input_words = []
 
 	preprocess_labels = (lambda lbls: preprocess_iob2(lbls, fallback_label)) if iob2 else (lambda lbls: lbls)
 
@@ -124,5 +168,10 @@ def create_examples(df: pd.DataFrame, encoding_scheme: Dict[str, int],
 
 			examples_input.append(curr_ex_tokens)
 			examples_labels.append(curr_ex_labels)
+			examples_input_words.append(curr_row["sentence_words"])
 
-	return examples_input, examples_labels
+	return {
+		"input": examples_input,
+		"output": examples_labels,
+		"input_words": examples_input_words
+	}
