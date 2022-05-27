@@ -138,7 +138,7 @@ class MetaphorController:
 
 				dev_preds = torch.tensor(dev_dataset.align_word_predictions(dev_preds, pad=True))
 
-				curr_dev_metrics = self.compute_metrics(true_labels=dev_gt["token_labels"],
+				curr_dev_metrics = self.compute_metrics(true_labels=dev_gt["word_labels"],
 														predicted_labels=dev_preds)
 				curr_dev_metrics["loss"] = dev_res['loss'] / max(1, dev_res['num_batches'])
 				logging.info(f"Dev loss: {curr_dev_metrics['loss']:.4f}")
