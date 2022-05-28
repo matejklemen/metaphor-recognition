@@ -1,10 +1,12 @@
 import ast
 import itertools
-from typing import Dict, Optional, Tuple, List, Iterable
+from typing import Dict, Optional, List, Iterable, Union
 
 import numpy as np
 import pandas as pd
+import torch
 from torch.utils.data import Dataset
+from transformers import AutoTokenizer
 
 from utils import preprocess_iob2
 
@@ -27,7 +29,7 @@ LOSS_IGNORE_INDEX = -100
 FALLBACK_LABEL_INDEX = 0
 
 
-class TransformersSeqDataset(Dataset):
+class TransformersTokenDataset(Dataset):
 	def __init__(self, **kwargs):
 		self.metadata_attrs = ["subsample_to_sample", "subword_to_word"]
 		self.valid_attrs = []
@@ -53,6 +55,93 @@ class TransformersSeqDataset(Dataset):
 
 	def __len__(self):
 		return len(getattr(self, self.valid_attrs[0]))
+
+	def has_labels(self):
+		return hasattr(self, "labels")
+
+	@staticmethod
+	def from_dataframe(df, label_scheme, primary_label_scheme, max_length, stride,
+					   history_prev_sents=0, fallback_label="O", iob2=False,
+					   tokenizer_or_tokenizer_name: Union[str, AutoTokenizer] = "EMBEDDIA/sloberta"):
+		# TODO: many arguments may be redundant and could be inferred (move code from train_transformers?)
+		# TODO: need to adapt for case where no labels are given (i.e. test set in the wild)
+		has_labels = "met_type" in df.columns
+		if has_labels:
+			df["met_type"] = transform_met_types(df["met_type"], label_scheme=label_scheme)
+
+		contextualized_ex = create_examples(df,
+											encoding_scheme=TAG2ID[primary_label_scheme],
+											history_prev_sents=history_prev_sents,
+											fallback_label=fallback_label,
+											iob2=iob2)
+
+		inputs, outputs, input_words = \
+			contextualized_ex["input"], contextualized_ex["output"], contextualized_ex["input_words"]
+
+		# [Original samples] are broken up into one or more [samples] for processing with the model
+		num_samples = len(inputs)
+		num_orig_samples = len(input_words)
+
+		if isinstance(tokenizer_or_tokenizer_name, str):
+			tokenizer = AutoTokenizer.from_pretrained(tokenizer_or_tokenizer_name)
+		else:
+			tokenizer = tokenizer_or_tokenizer_name
+
+		enc_inputs = tokenizer(
+			inputs, is_split_into_words=True,
+			max_length=max_length, padding="max_length", truncation=True,
+			return_overflowing_tokens=True, stride=stride,
+			return_tensors="pt"
+		)
+
+		is_start_encountered = np.zeros(num_samples, dtype=bool)
+		subsample_to_sample, subword_to_word = [], []
+		enc_outputs = []
+		for idx_ex, (curr_input_ids, idx_orig_ex) in enumerate(zip(enc_inputs["input_ids"],
+																   enc_inputs["overflow_to_sample_mapping"])):
+			subsample_to_sample.append(int(idx_orig_ex))
+			curr_word_ids = enc_inputs.word_ids(idx_ex)
+			curr_word_ids_shuf = []  # contains word IDs only for non-overlapping words, None for the rest
+
+			# where does sequence actually start, i.e. after <bos>
+			nonspecial_start = 0
+			while curr_word_ids[nonspecial_start] is not None:
+				nonspecial_start += 1
+
+			# when an example is broken up, all but the first sub-example have first `stride` tokens overlapping with prev.
+			ignore_n_overlapping = 0
+			if is_start_encountered[idx_orig_ex]:
+				ignore_n_overlapping = stride
+			else:
+				is_start_encountered[idx_orig_ex] = True
+
+			fixed_out = []
+			fixed_out += [LOSS_IGNORE_INDEX] * (nonspecial_start + ignore_n_overlapping)
+			curr_word_ids_shuf.extend([None] * (nonspecial_start + ignore_n_overlapping))
+
+			for idx_subw, w_id in enumerate(curr_word_ids[(nonspecial_start + ignore_n_overlapping):],
+											start=(nonspecial_start + ignore_n_overlapping)):
+				if curr_word_ids[idx_subw] is None:
+					fixed_out.append(LOSS_IGNORE_INDEX)
+					curr_word_ids_shuf.append(None)
+				else:
+					fixed_out.append(outputs[idx_orig_ex][w_id])
+					# overlapping with some previous sample
+					if outputs[idx_orig_ex][w_id] == LOSS_IGNORE_INDEX:
+						curr_word_ids_shuf.append(None)
+					else:
+						curr_word_ids_shuf.append(w_id)
+
+			enc_outputs.append(fixed_out)
+			subword_to_word.append(curr_word_ids_shuf)
+
+		enc_inputs["subsample_to_sample"] = subsample_to_sample
+		enc_inputs["subword_to_word"] = subword_to_word
+		enc_inputs["labels"] = torch.tensor(enc_outputs)
+		del enc_inputs["overflow_to_sample_mapping"]
+
+		train_dataset = TransformersTokenDataset(**enc_inputs)
+		return train_dataset
 
 	def align_word_predictions(self, preds, pad=False) -> List[int]:
 		""" Converts potentially broken up and partially repeating (overlapping) predictions to word-level predictions."""
