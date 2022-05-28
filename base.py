@@ -24,6 +24,7 @@ class MetaphorController:
 		self.sec_label_scheme = SCHEME_CONVERSION.get(self.prim_label_scheme, self.prim_label_scheme)
 		self.iob2 = self.prim_label_scheme.endswith("iob2")
 		self.num_labels = len(TAG2ID[self.prim_label_scheme])
+		self.num_eval_labels = len(TAG2ID[self.sec_label_scheme])
 		self.fallback_str = ID2TAG[self.prim_label_scheme][FALLBACK_LABEL_INDEX]
 
 		self.validate_every_n_examples = validate_every_n_examples
@@ -167,7 +168,7 @@ class MetaphorController:
 
 	def compute_metrics(self, true_labels, predicted_labels):
 		metrics = {}
-		pos_labels = list(range(1, self.num_labels))  # all but the fallback label
+		pos_labels = list(range(1, self.num_eval_labels))  # all but the fallback label
 		macro_p, macro_r, macro_f1 = 0.0, 0.0, 0.0
 		for curr_label in pos_labels:
 			curr_label_str = ID2TAG[self.sec_label_scheme][curr_label]
