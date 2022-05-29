@@ -62,14 +62,15 @@ class TransformersTokenDataset(Dataset):
 					   tokenizer_or_tokenizer_name: Union[str, AutoTokenizer] = "EMBEDDIA/sloberta"):
 		# TODO: many arguments may be redundant and could be inferred (move code from train_transformers?)
 		# TODO: need to adapt for case where no labels are given (i.e. test set in the wild)
-		has_labels = "met_type" in df.columns
-		if has_labels:
-			df["met_type"] = transform_met_types(df["met_type"], label_scheme=label_scheme)
-
 		scheme_info = extract_scheme_info(label_scheme)
 		primary_label_scheme = scheme_info["primary"]["name"]
+		secondary_label_scheme = scheme_info["secondary"]["name"]
 		fallback_label = scheme_info["fallback_label"]
 		iob2 = scheme_info["iob2"]
+
+		has_labels = "met_type" in df.columns
+		if has_labels:
+			df["met_type"] = transform_met_types(df["met_type"], label_scheme=secondary_label_scheme)
 
 		contextualized_ex = create_examples(df,
 											encoding_scheme=TAG2ID[primary_label_scheme],
