@@ -34,22 +34,19 @@ def resolve(element, expand_phrase: bool = False):
 		# Annotated word or word group
 		elif element.tag.endswith("seg"):
 			mtype, new_frame_buffer = "O", frame_buffer
-			if element.attrib["subtype"] != "frame":
-				if element.attrib["subtype"] not in {"MRWd", "MRWi", "WIDLI", "MFlag"}:
-					logging.warning(f"Not covered: {element.attrib['subtype']}")
-
-				# Frame annotations in komet are prepended with "#met.", while those in g-komet are not -> Unify
-				if element.attrib["subtype"].startswith("#met."):
-					mtype = element.attrib["subtype"][5:]
-				else:
-					mtype = element.attrib["subtype"]
+			if element.attrib["type"] == "frame":
+				new_frame_buffer += [element.attrib["subtype"]]
 			else:
-				new_frame_buffer += [element.attrib["ana"]]
+				if element.attrib["subtype"] not in {"idiom", "MRWd", "MRWi", "WIDLI", "MFlag"}:
+					logging.warning(f"Not covered: {element.attrib['subtype']}")
+				# metaphor or idiom
+				mtype = element.attrib["subtype"]
 
 			parsed_data = []
 			for child in element:
-				if child.tag.endswith("c"):  # spaces between words, skip
+				if child.tag.endswith(("c", "vocal", "pause")):  # empty space betw. words or "special" word
 					continue
+
 				res = _resolve_recursively(child, mtype, new_frame_buffer)
 				if isinstance(res, list):
 					parsed_data.extend(res)
@@ -59,6 +56,8 @@ def resolve(element, expand_phrase: bool = False):
 			return parsed_data
 
 	curr_annotations = _resolve_recursively(element, "O", [])
+	if curr_annotations is None:
+		curr_annotations = []
 	if not isinstance(curr_annotations, list):
 		curr_annotations = [curr_annotations]
 
@@ -84,11 +83,11 @@ def resolve(element, expand_phrase: bool = False):
 if __name__ == "__main__":
 	logger = logging.basicConfig(level=logging.INFO)
 
-	DATA_DIR = "/home/matej/Documents/data/komet"
-	data_files = []
+	DATA_DIR = "/home/matej/Documents/data/g-komet"
+	data_files = []  # TODO: sort data_files afterwards
 	for fname in os.listdir(DATA_DIR):
 		curr_path = os.path.join(DATA_DIR, fname)
-		if os.path.isfile(curr_path) and fname.endswith(".xml") and fname != "komet.xml":  # komet.xml = meta-file
+		if os.path.isfile(curr_path) and fname.endswith(".xml") and fname != "G-Komet.xml":  # komet.xml = meta-file
 			data_files.append(fname)
 
 	data = {
@@ -108,8 +107,9 @@ if __name__ == "__main__":
 		NAMESPACE = namespace(root)
 
 		idx_sent_glob = 0
-		for idx_par, curr_par in enumerate(root.iterfind(f"{NAMESPACE}p")):
+		for idx_par, curr_par in enumerate(root.iterfind(f".//{NAMESPACE}p")):
 			for idx_sent, curr_sent in enumerate(curr_par.iterfind(f"{NAMESPACE}s")):
+				# print(curr_sent)
 				words, types, frames = [], [], []
 				for curr_el in curr_sent:
 					if curr_el.tag.endswith(("w", "pc", "seg")):
@@ -120,6 +120,9 @@ if __name__ == "__main__":
 							words.append(_el[0])
 							types.append(_el[1])
 							frames.append(_el[2])
+
+				if len(words) == 0:
+					continue
 
 				data["document_name"].append(fname)
 				data["idx_paragraph"].append(idx_par)
