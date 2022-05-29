@@ -200,6 +200,9 @@ def extract_scheme_info(scheme_str: str):
 	# iob2 OFF, number of provided labels indicates number of positive labels!
 	elif len(scheme_parts) == 2:
 		scheme_name, num_pos_labels = scheme_parts[0], int(scheme_parts[1])
+		if scheme_name == "binary":
+			num_pos_labels = 1
+
 		scheme_info["primary"] = {"name": scheme_name, "num_pos_labels": num_pos_labels}
 		scheme_info["secondary"] = {"name": scheme_name, "num_pos_labels": num_pos_labels}
 		scheme_info["fallback_label"] = ID2TAG[scheme_name][FALLBACK_LABEL_INDEX]
@@ -208,10 +211,12 @@ def extract_scheme_info(scheme_str: str):
 	elif len(scheme_parts) == 3:
 		prim_scheme_name = f"{scheme_parts[0]}_iob2"
 		sec_scheme_name = scheme_parts[0]
-		num_labels = int(scheme_parts[1])
+		num_pos_labels = int(scheme_parts[1])
+		if prim_scheme_name == "binary":
+			num_pos_labels = 1
 
-		scheme_info["primary"] = {"name": prim_scheme_name, "num_pos_labels": 2 * num_labels}  # B-, I- for each label
-		scheme_info["secondary"] = {"name": sec_scheme_name, "num_pos_labels": num_labels}
+		scheme_info["primary"] = {"name": prim_scheme_name, "num_pos_labels": 2 * num_pos_labels}  # B-, I- for each label
+		scheme_info["secondary"] = {"name": sec_scheme_name, "num_pos_labels": num_pos_labels}
 		scheme_info["fallback_label"] = ID2TAG[prim_scheme_name][FALLBACK_LABEL_INDEX]
 		scheme_info["iob2"] = True
 
