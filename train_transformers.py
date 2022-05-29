@@ -10,14 +10,14 @@ import wandb
 from transformers import AutoTokenizer, AutoModelForTokenClassification
 
 from base import MetaphorController
-from data import load_df, TAG2ID, TransformersTokenDataset
+from data import load_df, TransformersTokenDataset, extract_scheme_info
 
 parser = argparse.ArgumentParser()
 parser.add_argument("--model_dir", type=str, default="debug")
 
-parser.add_argument("--train_path", type=str, default="data/train_data.tsv")
-parser.add_argument("--dev_path", type=str, default="data/dev_data.tsv")
-parser.add_argument("--test_path", type=str, default="data/test_data.tsv")
+parser.add_argument("--train_path", type=str, default="data/komet/train_data.tsv")
+parser.add_argument("--dev_path", type=str, default="data/komet/dev_data.tsv")
+parser.add_argument("--test_path", type=str, default="data/komet/test_data.tsv")
 
 # <option>_N indicates N labels being taken into account, others are treated as "other"
 # Priority: MRWi, MRWd, WIDLI, MFlag
@@ -76,22 +76,12 @@ if __name__ == "__main__":
 	DEVICE = torch.device("cpu") if args.use_cpu else torch.device("cuda")
 	STRIDE = args.max_length // 2 if args.stride is None else args.stride
 	args.stride = STRIDE
-	# Convert from e.g., "binary_2" -> "binary", "2"
-	TYPE_LABEL_SCHEME, NUM_LABELS = args.label_scheme.split("_")
-	PRIMARY_LABEL_SCHEME = TYPE_LABEL_SCHEME
-	SECONDARY_LABEL_SCHEME = TYPE_LABEL_SCHEME  # If IOB2 is used, holds the name of the non-IOB2 equivalent scheme
-	NUM_LABELS = int(NUM_LABELS)
+
 	wandb.init(project=args.wandb_project_name, config=vars(args))
-
-	# iob2 transforms each positive label into two labels, e.g., metaphor -> {B-metaphor, I-metaphor}
-	FALLBACK_LABEL = "O"
-	if PRIMARY_LABEL_SCHEME == "binary":
-		FALLBACK_LABEL = "not_metaphor"
-	elif PRIMARY_LABEL_SCHEME == "independent":
-		FALLBACK_LABEL = "O"
-
 	if args.iob2:
-		PRIMARY_LABEL_SCHEME, SECONDARY_LABEL_SCHEME = f"{PRIMARY_LABEL_SCHEME}_iob2", PRIMARY_LABEL_SCHEME
+		args.label_scheme = f"{args.label_scheme}_iob2"
+	scheme_info = extract_scheme_info(args.label_scheme)
+	num_train_labels = 1 + scheme_info["primary"]["num_pos_labels"]  # includes fallback (negative) label
 
 	train_df = load_df(args.train_path)
 	dev_df = load_df(args.dev_path)
@@ -99,28 +89,23 @@ if __name__ == "__main__":
 
 	tokenizer = AutoTokenizer.from_pretrained(args.pretrained_name_or_path)
 	model = AutoModelForTokenClassification.from_pretrained(args.pretrained_name_or_path,
-															num_labels=len(TAG2ID[PRIMARY_LABEL_SCHEME])).to(DEVICE)
+															num_labels=num_train_labels).to(DEVICE)
 	controller = MetaphorController(
-		model_dir=args.model_dir,
-		label_scheme=PRIMARY_LABEL_SCHEME, tokenizer_or_tokenizer_name=tokenizer, model_or_model_name=model,
+		model_dir=args.model_dir, label_scheme=args.label_scheme,
+		tokenizer_or_tokenizer_name=tokenizer, model_or_model_name=model,
 		learning_rate=args.learning_rate, batch_size=args.batch_size,
 		validate_every_n_examples=args.validate_steps, optimized_metric="f1_macro",
 		device=("cpu" if args.use_cpu else "cuda")
 	)
 
-	# ------------------------------------
 	train_dataset = TransformersTokenDataset.from_dataframe(
-		train_df, label_scheme=args.label_scheme, primary_label_scheme=PRIMARY_LABEL_SCHEME,
-		max_length=args.max_length, stride=STRIDE, history_prev_sents=args.history_prev_sents,
-		fallback_label=FALLBACK_LABEL, iob2=args.iob2, tokenizer_or_tokenizer_name=tokenizer
+		train_df, label_scheme=args.label_scheme, max_length=args.max_length, stride=STRIDE,
+		history_prev_sents=args.history_prev_sents, tokenizer_or_tokenizer_name=tokenizer
 	)
 
-	# ------------------------------------
-
 	dev_dataset = TransformersTokenDataset.from_dataframe(
-		dev_df, label_scheme=args.label_scheme, primary_label_scheme=PRIMARY_LABEL_SCHEME,
-		max_length=args.max_length, stride=STRIDE, history_prev_sents=args.history_prev_sents,
-		fallback_label=FALLBACK_LABEL, iob2=args.iob2, tokenizer_or_tokenizer_name=tokenizer
+		dev_df, label_scheme=args.label_scheme, max_length=args.max_length, stride=STRIDE,
+		history_prev_sents=args.history_prev_sents, tokenizer_or_tokenizer_name=tokenizer
 	)
 
 	# ------------------------------------

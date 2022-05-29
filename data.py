@@ -20,8 +20,6 @@ TAG2ID = {
 																			 itertools.product(["B-", "I-"], POS_MET_TYPES))))}
 }
 
-SCHEME_CONVERSION = {"binary_iob2": "binary", "independent_iob2": "independent"}
-
 ID2TAG = {curr_scheme: {_i: _tag for _tag, _i in TAG2ID[curr_scheme].items()} for curr_scheme in TAG2ID}
 # This is used to mark labels that should not be taken into account in loss calculation
 LOSS_IGNORE_INDEX = -100
@@ -60,14 +58,18 @@ class TransformersTokenDataset(Dataset):
 		return hasattr(self, "labels")
 
 	@staticmethod
-	def from_dataframe(df, label_scheme, primary_label_scheme, max_length, stride,
-					   history_prev_sents=0, fallback_label="O", iob2=False,
+	def from_dataframe(df, label_scheme, max_length, stride, history_prev_sents=0,
 					   tokenizer_or_tokenizer_name: Union[str, AutoTokenizer] = "EMBEDDIA/sloberta"):
 		# TODO: many arguments may be redundant and could be inferred (move code from train_transformers?)
 		# TODO: need to adapt for case where no labels are given (i.e. test set in the wild)
 		has_labels = "met_type" in df.columns
 		if has_labels:
 			df["met_type"] = transform_met_types(df["met_type"], label_scheme=label_scheme)
+
+		scheme_info = extract_scheme_info(label_scheme)
+		primary_label_scheme = scheme_info["primary"]["name"]
+		fallback_label = scheme_info["fallback_label"]
+		iob2 = scheme_info["iob2"]
 
 		contextualized_ex = create_examples(df,
 											encoding_scheme=TAG2ID[primary_label_scheme],
@@ -172,6 +174,49 @@ class TransformersTokenDataset(Dataset):
 							   for _curr_preds in converted_preds]
 
 		return converted_preds
+
+
+def extract_scheme_info(scheme_str: str):
+	# scheme_str has the format "<label_type>[_<num_pos_labels>[_iob2]]", e.g. "independent_3_iob2"
+	scheme_info = {
+		"primary": {},
+		"secondary": {},
+		"fallback_label": None,
+		"iob2": False
+	}
+
+	scheme_parts = scheme_str.split("_")
+	# iob2 OFF
+	if len(scheme_parts) == 1:
+		scheme_name = scheme_parts[0]
+		num_labels = len(TAG2ID[scheme_name])  # NOTE: this includes also the negative (fallback) label!
+		scheme_info["primary"] = {"name": scheme_name, "num_pos_labels": num_labels - 1}
+		scheme_info["secondary"] = {"name": scheme_name, "num_pos_labels": num_labels - 1}
+		scheme_info["fallback_label"] = ID2TAG[scheme_name][FALLBACK_LABEL_INDEX]
+
+	# iob2 OFF, number of provided labels indicates number of positive labels!
+	elif len(scheme_parts) == 2:
+		scheme_name, num_pos_labels = scheme_parts[0], int(scheme_parts[1])
+		scheme_info["primary"] = {"name": scheme_name, "num_pos_labels": num_pos_labels}
+		scheme_info["secondary"] = {"name": scheme_name, "num_pos_labels": num_pos_labels}
+		scheme_info["fallback_label"] = ID2TAG[scheme_name][FALLBACK_LABEL_INDEX]
+
+	# iob2 ON, number of provided labels indicates number of positive labels!
+	elif len(scheme_parts) == 3:
+		prim_scheme_name = f"{scheme_parts[0]}_iob2"
+		sec_scheme_name = scheme_parts[0]
+		num_labels = int(scheme_parts[1])
+
+		scheme_info["primary"] = {"name": prim_scheme_name, "num_pos_labels": 2 * num_labels}  # B-, I- for each label
+		scheme_info["secondary"] = {"name": sec_scheme_name, "num_pos_labels": num_labels}
+		scheme_info["fallback_label"] = ID2TAG[prim_scheme_name][FALLBACK_LABEL_INDEX]
+		scheme_info["iob2"] = True
+
+	else:
+		raise ValueError(f"Invalid format for scheme: '{scheme_str}'. Expecting format "
+						 f"'<label_type>[_<num_pos_labels>[_iob2]]', where the brackets indicate optional parts.")
+
+	return scheme_info
 
 
 def transform_met_types(met_types: Iterable[Iterable[str]], label_scheme: str):

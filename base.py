@@ -8,7 +8,7 @@ from torch.utils.data import Subset, DataLoader
 from tqdm import tqdm
 from transformers import AutoTokenizer, AutoModelForTokenClassification
 
-from data import SCHEME_CONVERSION, TAG2ID, ID2TAG, FALLBACK_LABEL_INDEX
+from data import TAG2ID, ID2TAG, extract_scheme_info
 from utils import token_precision, token_recall, token_f1
 
 
@@ -18,14 +18,16 @@ class MetaphorController:
 				 learning_rate=2e-5, batch_size=32, validate_every_n_examples=3000, optimized_metric="f1_macro",
 				 device="cuda"):
 		self.model_dir = model_dir
+
 		# Primary label scheme is the one used in model, secondary is the one used in the evaluation
-		# This is only different if the primary scheme is IOB2-based (in that case, the secondary one is non-IOB2)
-		self.prim_label_scheme = label_scheme
-		self.sec_label_scheme = SCHEME_CONVERSION.get(self.prim_label_scheme, self.prim_label_scheme)
-		self.iob2 = self.prim_label_scheme.endswith("iob2")
-		self.num_labels = len(TAG2ID[self.prim_label_scheme])
-		self.num_eval_labels = len(TAG2ID[self.sec_label_scheme])
-		self.fallback_str = ID2TAG[self.prim_label_scheme][FALLBACK_LABEL_INDEX]
+		# They only differ if the primary one is IOB2-based (in that case, the secondary one is non-IOB2 equivalent)
+		self.scheme_info = extract_scheme_info(label_scheme)
+		self.prim_label_scheme = self.scheme_info["primary"]["name"]
+		self.sec_label_scheme = self.scheme_info["secondary"]["name"]
+		self.iob2 = self.scheme_info["iob2"]
+		self.num_train_labels = 1 + self.scheme_info["primary"]["num_pos_labels"]
+		self.num_eval_labels = self.scheme_info["secondary"]["num_pos_labels"]  # only eval on positive labels
+		self.fallback_str = self.scheme_info["fallback_label"]
 
 		self.validate_every_n_examples = validate_every_n_examples
 		self.learning_rate = learning_rate
@@ -50,7 +52,8 @@ class MetaphorController:
 			logging.info(f"Model was provided pre-loaded - it is assumed that the settings are pre-set.")
 			self.model = model_or_model_name
 		else:
-			self.model = AutoModelForTokenClassification.from_pretrained(model_or_model_name, num_labels=self.num_labels)
+			self.model = AutoModelForTokenClassification.from_pretrained(model_or_model_name,
+																		 num_labels=self.num_train_labels)
 
 		self.model = self.model.to(self.device)
 		self.optimizer = optim.AdamW(params=self.model.parameters(), lr=self.learning_rate)
