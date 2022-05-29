@@ -13,11 +13,13 @@ from utils import preprocess_iob2
 POS_MET_TYPES = ["MRWi", "MRWd", "WIDLI", "MFlag"]
 TAG2ID = {
 	"binary": {_tag: _i for _i, _tag in enumerate(["not_metaphor", "metaphor"])},
-	"binary_iob2": {_tag: _i for _i, _tag in enumerate(["not_metaphor"] + list(map(lambda tup: "".join(tup),
-																				   itertools.product(["B-", "I-"], ["metaphor"]))))},
+	"binary_iob2": {_tag: _i for _i, _tag in enumerate(["not_metaphor"] + [f"{_prefix}-{_main}"
+																		   for _main in ["metaphor"]
+																		   for _prefix in ["B", "I"]])},
 	"independent": {_tag: _i for _i, _tag in enumerate(["O"] + POS_MET_TYPES)},
-	"independent_iob2": {_tag: _i for _i, _tag in enumerate(["O"] + list(map(lambda tup: "".join(tup),
-																			 itertools.product(["B-", "I-"], POS_MET_TYPES))))}
+	"independent_iob2": {_tag: _i for _i, _tag in enumerate(["O"] + [f"{_prefix}-{_main}"
+																	 for _main in POS_MET_TYPES
+																	 for _prefix in ["B", "I"]])}
 }
 
 ID2TAG = {curr_scheme: {_i: _tag for _tag, _i in TAG2ID[curr_scheme].items()} for curr_scheme in TAG2ID}
@@ -64,13 +66,13 @@ class TransformersTokenDataset(Dataset):
 		# TODO: need to adapt for case where no labels are given (i.e. test set in the wild)
 		scheme_info = extract_scheme_info(label_scheme)
 		primary_label_scheme = scheme_info["primary"]["name"]
-		secondary_label_scheme = scheme_info["secondary"]["name"]
 		fallback_label = scheme_info["fallback_label"]
 		iob2 = scheme_info["iob2"]
 
 		has_labels = "met_type" in df.columns
 		if has_labels:
-			df["met_type"] = transform_met_types(df["met_type"], label_scheme=secondary_label_scheme)
+			non_iob2_scheme = f"{scheme_info['secondary']['name']}_{scheme_info['secondary']['num_pos_labels']}"
+			df["met_type"] = transform_met_types(df["met_type"], label_scheme=non_iob2_scheme)
 
 		contextualized_ex = create_examples(df,
 											encoding_scheme=TAG2ID[primary_label_scheme],
