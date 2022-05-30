@@ -17,7 +17,6 @@ parser.add_argument("--model_dir", type=str, default="debug")
 
 parser.add_argument("--train_path", type=str, default="data/komet/train_data.tsv")
 parser.add_argument("--dev_path", type=str, default="data/komet/dev_data.tsv")
-parser.add_argument("--test_path", type=str, default="data/komet/test_data.tsv")
 
 # <option>_N indicates N labels being taken into account, others are treated as "other"
 # Priority: MRWi, MRWd, WIDLI, MFlag
@@ -85,7 +84,6 @@ if __name__ == "__main__":
 
 	train_df = load_df(args.train_path)
 	dev_df = load_df(args.dev_path)
-	test_df = load_df(args.test_path)
 
 	tokenizer = AutoTokenizer.from_pretrained(args.pretrained_name_or_path)
 	model = AutoModelForTokenClassification.from_pretrained(args.pretrained_name_or_path,
