@@ -33,7 +33,7 @@ def resolve(element, expand_phrase: bool = False):
 				return element.text, metaphor_type, "/".join(frame_buffer)
 		# Annotated word or word group
 		elif element.tag.endswith("seg"):
-			mtype, new_frame_buffer = "O", frame_buffer
+			mtype, new_frame_buffer = metaphor_type, frame_buffer
 			if element.attrib["type"] == "frame":
 				new_frame_buffer += [element.attrib["subtype"]]
 			else:
@@ -99,6 +99,7 @@ if __name__ == "__main__":
 		"met_type": [],
 		"met_frame": []
 	}
+	label_counter = Counter()
 	for fname in data_files:
 		fpath = os.path.join(DATA_DIR, fname)
 		print(fpath)
@@ -131,8 +132,11 @@ if __name__ == "__main__":
 				data["sentence_words"].append(words)
 				data["met_type"].append(types)
 				data["met_frame"].append(frames)
+				label_counter += Counter(types)
 
 				idx_sent_glob += 1
 
+	print("Label distribution:")
+	print(label_counter)
 	data = pd.DataFrame(data)
 	data.to_csv("data.tsv", sep="\t", index=False)

@@ -100,6 +100,7 @@ if __name__ == "__main__":
 		"met_type": [],
 		"met_frame": []
 	}
+	label_counter = Counter()
 	for fname in data_files:
 		fpath = os.path.join(DATA_DIR, fname)
 		print(fpath)
@@ -128,8 +129,11 @@ if __name__ == "__main__":
 				data["sentence_words"].append(words)
 				data["met_type"].append(types)
 				data["met_frame"].append(frames)
+				label_counter += Counter(types)
 
 				idx_sent_glob += 1
 
+	print("Label distribution:")
+	print(label_counter)
 	data = pd.DataFrame(data)
 	data.to_csv("data.tsv", sep="\t", index=False)
