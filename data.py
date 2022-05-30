@@ -8,7 +8,6 @@ import torch
 from torch.utils.data import Dataset
 from transformers import AutoTokenizer
 
-from utils import preprocess_iob2
 
 POS_MET_TYPES = ["MRWi", "MRWd", "WIDLI", "MFlag"]
 TAG2ID = {
@@ -31,7 +30,7 @@ FALLBACK_LABEL_INDEX = 0
 
 class TransformersTokenDataset(Dataset):
 	def __init__(self, **kwargs):
-		self.metadata_attrs = ["subsample_to_sample", "subword_to_word"]
+		self.metadata_attrs = ["sample_words", "subsample_to_sample", "subword_to_word"]
 		self.valid_attrs = []
 		for attr, values in kwargs.items():
 			if attr not in self.metadata_attrs:
@@ -40,7 +39,7 @@ class TransformersTokenDataset(Dataset):
 
 		assert len(self.valid_attrs) > 0
 		# Need for alignment of "subsamples" to samples
-		assert all(hasattr(self, _attr_name) for _attr_name in ["subsample_to_sample", "subword_to_word"])
+		assert all(hasattr(self, _attr_name) for _attr_name in ["subsample_to_sample", "subword_to_word", "sample_words"])
 		self.num_unique_samples = len(set(kwargs["subsample_to_sample"]))
 
 		self.num_words_in_sample = [0 for _ in range(self.num_unique_samples)]
@@ -143,6 +142,7 @@ class TransformersTokenDataset(Dataset):
 		enc_inputs["subsample_to_sample"] = subsample_to_sample
 		enc_inputs["subword_to_word"] = subword_to_word
 		enc_inputs["labels"] = torch.tensor(enc_outputs)
+		enc_inputs["sample_words"] = input_words
 		del enc_inputs["overflow_to_sample_mapping"]
 
 		train_dataset = TransformersTokenDataset(**enc_inputs)
@@ -225,6 +225,32 @@ def extract_scheme_info(scheme_str: str):
 						 f"'<label_type>[_<num_pos_labels>[_iob2]]', where the brackets indicate optional parts.")
 
 	return scheme_info
+
+
+def preprocess_iob2(labels: List[str], fallback_label: str = "O") -> List[str]:
+	""" Breaks up contiguous labels of the same type into beginning (B-)/inside(I-) labels. Keeps negative labels
+	as they are. """
+	pos, open_type = 0, None
+	prepr_labels = []
+
+	while pos < len(labels):
+		if labels[pos] != fallback_label:
+			if open_type is None:
+				prepr_labels.append(f"B-{labels[pos]}")
+				open_type = labels[pos]
+			else:
+				if labels[pos] == open_type:
+					prepr_labels.append(f"I-{labels[pos]}")
+				else:
+					prepr_labels.append(f"B-{labels[pos]}")
+					open_type = labels[pos]
+		else:
+			prepr_labels.append(labels[pos])
+			open_type = None
+
+		pos += 1
+
+	return prepr_labels
 
 
 def transform_met_types(met_types: Iterable[Iterable[str]], label_scheme: str):

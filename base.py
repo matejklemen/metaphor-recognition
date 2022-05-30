@@ -1,4 +1,6 @@
+import json
 import logging
+import os
 from time import time
 
 import torch
@@ -8,7 +10,7 @@ from torch.utils.data import Subset, DataLoader
 from tqdm import tqdm
 from transformers import AutoTokenizer, AutoModelForTokenClassification
 
-from data import TAG2ID, ID2TAG, extract_scheme_info
+from data import TAG2ID, ID2TAG, extract_scheme_info, LOSS_IGNORE_INDEX
 from utils import token_precision, token_recall, token_f1
 
 
@@ -21,7 +23,8 @@ class MetaphorController:
 
 		# Primary label scheme is the one used in model, secondary is the one used in the evaluation
 		# They only differ if the primary one is IOB2-based (in that case, the secondary one is non-IOB2 equivalent)
-		self.scheme_info = extract_scheme_info(label_scheme)
+		self.label_scheme = label_scheme
+		self.scheme_info = extract_scheme_info(self.label_scheme)
 		self.prim_label_scheme = self.scheme_info["primary"]["name"]
 		self.sec_label_scheme = self.scheme_info["secondary"]["name"]
 		self.iob2 = self.scheme_info["iob2"]
@@ -32,7 +35,6 @@ class MetaphorController:
 		self.validate_every_n_examples = validate_every_n_examples
 		self.learning_rate = learning_rate
 		self.batch_size = batch_size
-		self.dev_batch_size = self.batch_size * 2
 
 		if device == "cuda" and not torch.cuda.is_available():
 			raise ValueError(f"Device set to 'cuda', but CUDA-capable device was not found by torch")
@@ -58,6 +60,39 @@ class MetaphorController:
 		self.model = self.model.to(self.device)
 		self.optimizer = optim.AdamW(params=self.model.parameters(), lr=self.learning_rate)
 
+	def save(self):
+		with open(os.path.join(self.model_dir, "controller_config.json"), "w", encoding="utf-8") as f_config:
+			json.dump({
+				"label_scheme": self.label_scheme,
+				"learning_rate": self.learning_rate,
+				"batch_size": self.batch_size,
+				"validate_every_n_examples": self.validate_every_n_examples,
+				"optimized_metric": self.optimized_metric,
+				"device": self.device_str
+			}, fp=f_config, indent=4)
+
+		self.model.save_pretrained(self.model_dir)
+
+	@staticmethod
+	def load(controller_dir, **override_kwargs):
+		with open(os.path.join(controller_dir, "controller_config.json"), "r", encoding="utf-8") as f_config:
+			config = json.load(fp=f_config)
+
+		config["model_dir"] = controller_dir
+		# When training, these likely point to a HF checkpoint, but they get saved locally
+		config["model_or_model_name"] = controller_dir
+		config["tokenizer_or_tokenizer_name"] = controller_dir
+
+		# User may override pre-trained config parameters, such as batch size or device
+		for config_key, new_value in override_kwargs.items():
+			old_value = ""
+			if config_key in config:
+				old_value = f" {config_key} = {config[config_key]} -> "
+			logging.info(f"Overriding config:{old_value}{config_key} = {new_value}")
+			config[config_key] = new_value
+
+		return MetaphorController(**config)
+
 	def run_training(self, train_dataset, dev_dataset=None, num_epochs=1):
 		ts = time()
 		num_train, num_dev = len(train_dataset), 0
@@ -73,7 +108,7 @@ class MetaphorController:
 					curr_labels = dev_dataset.labels[idx_dev]
 					curr_processed = []
 					for _lbl in curr_labels.tolist():
-						if _lbl == -100:
+						if _lbl == LOSS_IGNORE_INDEX:
 							curr_processed.append(_lbl)
 						else:
 							str_tag = ID2TAG[self.prim_label_scheme][_lbl]
@@ -89,6 +124,9 @@ class MetaphorController:
 				dev_gt["word_labels"] = independent_labels
 
 			dev_gt["word_labels"] = torch.tensor(dev_dataset.align_word_predictions(dev_dataset.labels, pad=True))
+
+		# Save initial version to prevent crash in case a non-trivial model can not be trained
+		self.save()
 
 		best_dev_metric, best_dev_metric_verbose = 0.0, None
 		max_subset_size = self.validate_every_n_examples
@@ -111,9 +149,13 @@ class MetaphorController:
 
 				# Skip evaluation on dev set if no dev set is provided or if training on small leftover training subset
 				if num_dev == 0 or len(curr_sub) < max_subset_size // 2:
+					# If no validation set is provided, new model is always saved
+					if num_dev == 0:
+						self.save()
+
 					continue
 
-				dev_res = self.eval_pass(dev_dataset)
+				dev_res = self.eval_pass(dev_dataset, batch_size=(2 * self.batch_size))
 				dev_preds = torch.argmax(dev_res["pred_probas"], dim=-1).cpu()
 
 				# If IOB2 is used, convert the labels to a non-IOB2 equivalent before token-level evaluation
@@ -124,7 +166,7 @@ class MetaphorController:
 						curr_labels = dev_preds[idx_dev]
 						curr_processed = []
 						for _lbl in curr_labels.tolist():
-							if _lbl == -100:
+							if _lbl == LOSS_IGNORE_INDEX:
 								curr_processed.append(_lbl)
 							else:
 								str_tag = ID2TAG[self.prim_label_scheme][_lbl]
@@ -159,7 +201,7 @@ class MetaphorController:
 					logging.info(f"NEW BEST dev metric!")
 					best_dev_metric = curr_dev_metric
 					best_dev_metric_verbose = curr_dev_metrics_verbose
-					self.model.save_pretrained(self.model_dir)
+					self.save()
 
 		logging.info(f"Training finished. Took {time() - ts:.4f}s")
 		logging.info(f"Best validation metric: {best_dev_metric:.4f}")
@@ -188,8 +230,48 @@ class MetaphorController:
 		metrics[f"f1_macro"] = macro_f1 / max(1, len(pos_labels))
 		return metrics
 
-	def run_prediction(self):
-		pass
+	def run_prediction(self, test_data, mcd_iters=0):
+		assert mcd_iters >= 0
+		use_mcd = mcd_iters > 0
+		eff_iters = 1 if mcd_iters == 0 else mcd_iters
+
+		pred_probas = []
+		for idx_iter in range(eff_iters):
+			curr_res = self.eval_pass(test_data, train_mode=use_mcd)
+			pred_probas.append(curr_res["pred_probas"])
+
+		pred_probas = torch.stack(pred_probas)  # [eff_iters, len(test_data), max_length, num_train_labels]
+		mean_probas = torch.mean(pred_probas, dim=0)  # [len(test_data), max_length, num_train_labels]
+		preds = torch.argmax(mean_probas, dim=-1)  # [len(test_data), max_length]
+
+		# If IOB2 is used, convert the labels to a non-IOB2 equivalent
+		if self.iob2:
+			# Convert IOB2 to independent labels (remove B-, I-) for evaluation
+			independent_labels = []
+			for idx_ex in range(preds.shape[0]):
+				curr_labels = preds[idx_ex]
+				curr_processed = []
+				for _lbl in curr_labels.tolist():
+					if _lbl == LOSS_IGNORE_INDEX:
+						curr_processed.append(_lbl)
+					else:
+						str_tag = ID2TAG[self.prim_label_scheme][_lbl]
+						if str_tag == self.fallback_str:
+							curr_processed.append(TAG2ID[self.sec_label_scheme][str_tag])
+						else:
+							# without "B-" or "I-"
+							curr_processed.append(TAG2ID[self.sec_label_scheme][str_tag[2:]])
+
+				independent_labels.append(curr_processed)
+
+			independent_labels = torch.tensor(independent_labels)
+			assert independent_labels.shape == preds.shape
+			preds = independent_labels
+
+		return {
+			"pred_probas": pred_probas,
+			"preds": preds
+		}
 
 	def train_pass(self, train_data):
 		self.model.train()
@@ -210,7 +292,8 @@ class MetaphorController:
 		return {"loss": train_loss, "num_batches": nb}
 
 	@torch.no_grad()
-	def eval_pass(self, dev_data, train_mode=False):
+	def eval_pass(self, dev_data, train_mode=False, batch_size=None):
+		used_batch_size = self.batch_size if batch_size is None else int(batch_size)
 		if train_mode:
 			self.model.train()
 		else:
@@ -218,7 +301,7 @@ class MetaphorController:
 
 		dev_loss, nb = 0.0, 0
 		dev_probas = []
-		for curr_batch_cpu in tqdm(DataLoader(dev_data, batch_size=self.dev_batch_size)):
+		for curr_batch_cpu in tqdm(DataLoader(dev_data, batch_size=used_batch_size)):
 			curr_batch = {_k: _v.to(self.device) for _k, _v in curr_batch_cpu.items()}
 
 			res = self.model(**curr_batch)

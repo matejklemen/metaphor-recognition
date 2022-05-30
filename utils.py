@@ -1,6 +1,6 @@
-from typing import List
-
 from sklearn.metrics import precision_score, recall_score, f1_score
+
+from data import LOSS_IGNORE_INDEX
 
 
 def token_precision(true_labels, pred_labels, pos_label: int = 1, ignore_label: int = -100):
@@ -26,31 +26,85 @@ def token_f1(true_labels, pred_labels, pos_label: int = 1, ignore_label: int = -
 	valid_pred = pred_labels[valid_mask] == pos_label
 	return f1_score(y_true=valid_true, y_pred=valid_pred, average="binary", pos_label=1)
 
+# TODO: define boilerplate here, use named_parameters for placeholders!!
+VIS_BOILERPLATE = \
+"""
+<!DOCTYPE html>
+<html>
+<head>
+	<meta charset='utf-8'>
+	<meta name='viewport' content='width=device-width, initial-scale=1'>
+	<title>Visualization</title>
+	<style type='text/css'>
+		.example {{
+			margin-bottom: 20px;
+		}}
+		.labels {{
+			display: flex;
+			flex-direction: row;
+			flex-wrap: wrap;
+		}}
+		.token {{
+			padding: 3px;
+			margin-right: 3px;
+			max-width:100px;
+			width: 100%;
+		}}
+		.annotation {{
+			font-size: 10px;
+		}}
+	</style>
+</head>
+<body>
+{formatted_examples}
+</body>
+</html>
+"""
 
-def preprocess_iob2(labels: List[str], fallback_label: str = "O") -> List[str]:
-	""" Breaks up contiguous labels of the same type into beginning (B-)/inside(I-) labels. Keeps negative labels
-	as they are. """
-	pos, open_type = 0, None
-	prepr_labels = []
 
-	while pos < len(labels):
-		if labels[pos] != fallback_label:
-			if open_type is None:
-				prepr_labels.append(f"B-{labels[pos]}")
-				open_type = labels[pos]
-			else:
-				if labels[pos] == open_type:
-					prepr_labels.append(f"I-{labels[pos]}")
+def visualize_token_predictions(tokens, token_predicted, token_true=None):
+	eff_true = token_true
+	if token_true is None:
+		eff_true = [None for _ in range(len(token_predicted))]
+	assert len(token_predicted) == len(eff_true) == len(tokens)
+
+	formatted_examples = []
+
+	for curr_tokens, curr_preds, curr_true in zip(tokens, token_predicted, eff_true):
+		if curr_true is None:
+			curr_true = [None for _ in range(len(curr_preds))]
+		assert len(curr_tokens) == len(curr_preds) == len(curr_true)
+		formatted_examples.append("<div class='example'>")
+
+		formatted_examples.append("<div class='metadata'>")
+		formatted_examples.append("<code>{}</code>".format(" ".join(curr_tokens)))
+		formatted_examples.append("</div>")
+
+		formatted_examples.append("<div class='labels'>")
+		for token, pred_lbl, true_lbl in zip(curr_tokens, curr_preds, curr_true):
+			skip_token = pred_lbl == LOSS_IGNORE_INDEX or true_lbl == LOSS_IGNORE_INDEX
+			if skip_token:
+				continue
+
+			border_color, bg_color = "#5c5b5b", "#d1d1d1"  # gray
+			optional_tooltip = ""
+			if true_lbl is not None:
+				if pred_lbl == true_lbl:
+					border_color, bg_color = "#32a852", "#baffcd"  # green
 				else:
-					prepr_labels.append(f"B-{labels[pos]}")
-					open_type = labels[pos]
-		else:
-			prepr_labels.append(labels[pos])
-			open_type = None
+					optional_tooltip = f" title='Correct: {true_lbl}'"
+					border_color, bg_color = "#700900", "#ff9d94"  # red
 
-		pos += 1
+			formatted_examples.append(f"<div class='token' style='border: 2px solid {border_color}; background-color: {bg_color};'{optional_tooltip}>")
+			formatted_examples.append(f"<div style='text-align: center;' class='annotation'>{pred_lbl}</div>")
+			formatted_examples.append(f"<div style='text-align: center;'>{token}</div>")
+			formatted_examples.append("</div>")
+		formatted_examples.append("</div>")
 
-	return prepr_labels
+		formatted_examples.append("</div>")
+
+	formatted_examples = "\n".join(formatted_examples)
+	return VIS_BOILERPLATE.format(formatted_examples=formatted_examples)
 
 
 if __name__ == "__main__":
@@ -68,3 +122,10 @@ if __name__ == "__main__":
 	print(token_precision(t, p, pos_label=1))
 	print(token_recall(t, p, pos_label=1))
 	print(token_f1(t, p, pos_label=1))
+
+	tokens = ['Moderen', ',', 'čist', 'in', 'preprost', '.']
+	preds = ['O', 'O', 'MRWi', 'O', 'O', 'O']
+	correct = ['O', 'O', 'MRWd', 'O', 'O', 'O']
+	with open("tmp.html", "w", encoding="utf-8") as f:
+		vis_html = visualize_token_predictions([tokens], [preds], [correct])
+		print(vis_html, file=f)

@@ -60,6 +60,10 @@ if __name__ == "__main__":
 		logging.info(f"No CUDA device found, overriding `--use_cpu` flag")
 		args.use_cpu = True
 
+	STRIDE = args.max_length // 2 if args.stride is None else args.stride
+	args.stride = STRIDE
+	DEVICE = torch.device("cpu") if args.use_cpu else torch.device("cuda")
+
 	for k, v in vars(args).items():
 		v_str = str(v)
 		v_str = f"...{v_str[-(50 - 3):]}" if len(v_str) > 50 else v_str
@@ -71,10 +75,6 @@ if __name__ == "__main__":
 	if args.random_seed is not None:
 		torch.manual_seed(args.random_seed)
 		np.random.seed(args.random_seed)
-
-	DEVICE = torch.device("cpu") if args.use_cpu else torch.device("cuda")
-	STRIDE = args.max_length // 2 if args.stride is None else args.stride
-	args.stride = STRIDE
 
 	wandb.init(project=args.wandb_project_name, config=vars(args))
 	if args.iob2:
