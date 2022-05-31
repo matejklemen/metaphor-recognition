@@ -5,6 +5,7 @@ import os
 import sys
 
 import numpy as np
+import pandas as pd
 import torch
 
 from base import MetaphorController
@@ -74,7 +75,7 @@ if __name__ == "__main__":
 	test_fname = args.test_path.split(os.path.sep)[-1]
 	# Save test data in the experiment (for reference)
 	test_df = load_df(args.test_path)
-	test_df.to_csv(os.path.join(args.experiment_dir, test_fname), sep="\t", index=False)
+	test_df.to_csv(os.path.join(args.experiment_dir, f"raw_{test_fname}"), sep="\t", index=False)
 
 	controller = MetaphorController.load(args.model_dir,
 										 batch_size=pred_args["batch_size"],
@@ -84,6 +85,8 @@ if __name__ == "__main__":
 		max_length=pred_args["max_length"], stride=pred_args["stride"],
 		history_prev_sents=pred_args["history_prev_sents"], tokenizer_or_tokenizer_name=controller.tokenizer
 	)
+
+	processed_test_df = pd.DataFrame({"sentence_words": test_dataset.sample_words})
 
 	test_res = controller.run_prediction(test_dataset, mcd_iters=args.mcd_iters)
 	test_preds = test_dataset.align_word_predictions(test_res["preds"].cpu(), pad=False)
@@ -119,6 +122,7 @@ if __name__ == "__main__":
 		test_true = test_dataset.align_word_predictions(test_true, pad=False)
 		test_true = [list(map(lambda _curr_lbl: ID2TAG[controller.sec_label_scheme].get(_curr_lbl, _curr_lbl), _curr_true))
 					 for _curr_true in test_true]
+		processed_test_df["true_met_type"] = test_true
 
 		test_metrics = controller.compute_metrics(predicted_labels=test_preds_for_eval, true_labels=test_true_for_eval)
 
@@ -130,6 +134,7 @@ if __name__ == "__main__":
 
 	test_preds = [list(map(lambda _curr_lbl: ID2TAG[controller.sec_label_scheme].get(_curr_lbl, _curr_lbl), _curr_preds))
 				  for _curr_preds in test_preds]
+	processed_test_df["pred_met_type"] = test_preds
 
 	with open(os.path.join(args.experiment_dir, "pred_visualization.html"), "w", encoding="utf-8") as f:
 		visualization_html = visualize_token_predictions(test_dataset.sample_words, test_preds, test_true)
@@ -137,3 +142,5 @@ if __name__ == "__main__":
 
 	with open(os.path.join(args.experiment_dir, "prediction_args.json"), "w", encoding="utf-8") as f:
 		json.dump(pred_args, fp=f, indent=4)
+
+	processed_test_df.to_csv(os.path.join(args.experiment_dir, f"processed_{test_fname}"), sep="\t", index=False)
