@@ -131,17 +131,9 @@ if __name__ == "__main__":
 	test_preds = [list(map(lambda _curr_lbl: ID2TAG[controller.sec_label_scheme].get(_curr_lbl, _curr_lbl), _curr_preds))
 				  for _curr_preds in test_preds]
 
-	with open(os.path.join(args.experiment_dir, f"pred_visualization.html"), "w", encoding="utf-8") as f:
+	with open(os.path.join(args.experiment_dir, "pred_visualization.html"), "w", encoding="utf-8") as f:
 		visualization_html = visualize_token_predictions(test_dataset.sample_words, test_preds, test_true)
 		print(visualization_html, file=f)
 
-
-
-
-
-
-
-
-
-
-
+	with open(os.path.join(args.experiment_dir, "prediction_args.json"), "w", encoding="utf-8") as f:
+		json.dump(pred_args, fp=f, indent=4)
