@@ -38,7 +38,7 @@ if __name__ == "__main__":
 	logger = logging.getLogger()
 	logger.setLevel(logging.INFO)
 	for curr_handler in [logging.StreamHandler(sys.stdout),
-						 logging.FileHandler(os.path.join(args.model_dir, "evaluation.log"))]:
+						 logging.FileHandler(os.path.join(args.experiment_dir, "evaluation.log"))]:
 		curr_handler.setFormatter(logging.Formatter("%(asctime)s [%(levelname)-5.5s]  %(message)s"))
 		logger.addHandler(curr_handler)
 
