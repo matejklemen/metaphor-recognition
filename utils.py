@@ -62,11 +62,12 @@ VIS_BOILERPLATE = \
 """
 
 
-def visualize_token_predictions(tokens, token_predicted, token_true=None):
+def visualize_token_predictions(tokens, token_predicted, token_true=None, uninteresting_labels=None):
 	eff_true = token_true
 	if token_true is None:
 		eff_true = [None for _ in range(len(token_predicted))]
 	assert len(token_predicted) == len(eff_true) == len(tokens)
+	eff_uninteresting = set(uninteresting_labels) if uninteresting_labels is not None else {"O", "not_metaphor"}
 
 	formatted_examples = []
 
@@ -86,9 +87,10 @@ def visualize_token_predictions(tokens, token_predicted, token_true=None):
 			if skip_token:
 				continue
 
-			border_color, bg_color = "#5c5b5b", "#d1d1d1"  # gray
+			border_color, bg_color = "#5c5b5b", "#e3e3e3"  # gray
 			optional_tooltip = ""
-			if true_lbl is not None:
+			# Visualize correctness only for "interesting" labels, e.g., positive labels in metaphor detection
+			if true_lbl is not None and (pred_lbl not in eff_uninteresting or true_lbl not in eff_uninteresting):
 				if pred_lbl == true_lbl:
 					border_color, bg_color = "#32a852", "#baffcd"  # green
 				else:
