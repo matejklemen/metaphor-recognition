@@ -14,8 +14,7 @@ def namespace(element):
 	return m.group(0) if m else ''
 
 
-# TODO: idioms_are_metaphors: bool = False
-def resolve(element, expand_phrase: bool = False, only_noun_or_verb: bool = False):
+def resolve(element, expand_phrase: bool = False, only_noun_or_verb: bool = False, idioms_are_metaphors: bool = False):
 	"""
 		MRWd = direct metaphor
 		MRWi = indirect metaphor
@@ -28,6 +27,9 @@ def resolve(element, expand_phrase: bool = False, only_noun_or_verb: bool = Fals
 	def _resolve_recursively(element, metaphor_type: str, frame_buffer: Optional[List]):
 		# Leaf node: word or punctuation character
 		if element.tag.endswith(("w", "pc")):
+			if idioms_are_metaphors and metaphor_type == "idiom":
+				metaphor_type = "MRWi"
+
 			if element.tag.endswith("w"):
 				pos_tag = element.attrib["ana"].split(":")[-1][0]  # e.g., ana="mte:Ncmpa" -> "N"
 			else:
