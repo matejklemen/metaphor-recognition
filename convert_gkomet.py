@@ -14,7 +14,8 @@ def namespace(element):
 	return m.group(0) if m else ''
 
 
-def resolve(element, expand_phrase: bool = False):
+# TODO: idioms_are_metaphors: bool = False
+def resolve(element, expand_phrase: bool = False, only_noun_or_verb: bool = False):
 	"""
 		MRWd = direct metaphor
 		MRWi = indirect metaphor
@@ -27,10 +28,15 @@ def resolve(element, expand_phrase: bool = False):
 	def _resolve_recursively(element, metaphor_type: str, frame_buffer: Optional[List]):
 		# Leaf node: word or punctuation character
 		if element.tag.endswith(("w", "pc")):
-			if len(frame_buffer) == 0:
-				return element.text, metaphor_type, "O"
+			if element.tag.endswith("w"):
+				pos_tag = element.attrib["ana"].split(":")[-1][0]  # e.g., ana="mte:Ncmpa" -> "N"
 			else:
-				return element.text, metaphor_type, "/".join(frame_buffer)
+				pos_tag = "/"
+
+			if len(frame_buffer) == 0:
+				return element.text, metaphor_type, "O", pos_tag
+			else:
+				return element.text, metaphor_type, "/".join(frame_buffer), pos_tag
 		# Annotated word or word group
 		elif element.tag.endswith("seg"):
 			mtype, new_frame_buffer = metaphor_type, frame_buffer
@@ -60,6 +66,25 @@ def resolve(element, expand_phrase: bool = False):
 		curr_annotations = []
 	if not isinstance(curr_annotations, list):
 		curr_annotations = [curr_annotations]
+
+	if only_noun_or_verb:
+		has_noun_or_verb = False
+		for anno in curr_annotations:
+			_, _, _, curr_pos = anno
+
+			if curr_pos == "N" or curr_pos == "V":
+				has_noun_or_verb = True
+				break
+
+		curr_annotations = list(map(lambda quad: quad[:3], curr_annotations))
+		# If no noun or verb, mark as "not metaphor" even if the words constitute a metaphor
+		if not has_noun_or_verb:
+			processed_annotations = []
+			for anno in curr_annotations:
+				word, mtype, mframe = anno
+				processed_annotations.append((word, "O", "O"))
+
+			curr_annotations = processed_annotations
 
 	# Expand metaphore type tag across the whole phrase (e.g., ["MRWd", "O"] -> ["MRWd", "MRWd"])
 	if expand_phrase and len(curr_annotations) > 1:
