@@ -200,7 +200,7 @@ def extract_scheme_info(scheme_str: str):
 	# iob2 OFF, number of provided labels indicates number of positive labels!
 	elif len(scheme_parts) == 2:
 		scheme_name, num_pos_labels = scheme_parts[0], int(scheme_parts[1])
-		if scheme_name == "binary":
+		if scheme_name.startswith("binary"):
 			num_pos_labels = 1
 
 		scheme_info["primary"] = {"name": scheme_name, "num_pos_labels": num_pos_labels}
@@ -212,7 +212,7 @@ def extract_scheme_info(scheme_str: str):
 		prim_scheme_name = f"{scheme_parts[0]}_iob2"
 		sec_scheme_name = scheme_parts[0]
 		num_pos_labels = int(scheme_parts[1])
-		if prim_scheme_name == "binary":
+		if prim_scheme_name.startswith("binary"):
 			num_pos_labels = 1
 
 		scheme_info["primary"] = {"name": prim_scheme_name, "num_pos_labels": 2 * num_pos_labels}  # B-, I- for each label
