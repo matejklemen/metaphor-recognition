@@ -60,7 +60,7 @@ class TransformersTokenDataset(Dataset):
 		return hasattr(self, "labels")
 
 	def has_frames(self):
-		return hasattr(self, "frames")
+		return hasattr(self, "frame_labels")
 
 	@staticmethod
 	def from_dataframe(df, label_scheme, max_length, stride, history_prev_sents=0,
@@ -215,7 +215,7 @@ class TransformersTokenDatasetWithFrames(TransformersTokenDataset):
 
 		inputs, outputs, input_words = \
 			contextualized_ex["input"], contextualized_ex["output"], contextualized_ex["input_words"]
-		frames = contextualized_ex["frames"] if has_met_frame else None
+		frames = contextualized_ex["frame_labels"] if has_met_frame else None
 
 		# [Original samples] are broken up into one or more [samples] for processing with the model
 		num_samples = len(inputs)
@@ -292,7 +292,7 @@ class TransformersTokenDatasetWithFrames(TransformersTokenDataset):
 		del enc_inputs["overflow_to_sample_mapping"]
 
 		if has_met_frame:
-			enc_inputs["frames"] = torch.tensor(enc_frames)
+			enc_inputs["frame_labels"] = torch.tensor(enc_frames)
 
 		train_dataset = TransformersTokenDatasetWithFrames(**enc_inputs)
 		return train_dataset
@@ -475,7 +475,7 @@ def create_examples(df: pd.DataFrame, encoding_scheme: Dict[str, int],
 		"input_words": examples_input_words
 	}
 	if has_frames:
-		ret_dict["frames"] = examples_frames
+		ret_dict["frame_labels"] = examples_frames
 
 	return ret_dict
 
