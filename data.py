@@ -1,5 +1,6 @@
 import ast
 import itertools
+import logging
 from typing import Dict, Optional, List, Iterable, Union
 
 import numpy as np
@@ -196,7 +197,7 @@ class TransformersTokenDatasetWithFrames(TransformersTokenDataset):
 			non_iob2_scheme = f"{scheme_info['secondary']['name']}_{scheme_info['secondary']['num_pos_labels']}"
 			df["met_type"] = transform_met_types(df["met_type"], label_scheme=non_iob2_scheme)
 
-		frame2id = kwargs["frame_encoding_scheme"]
+		frame2id = kwargs["frame_encoding"]
 		has_met_frame = "met_frame" in df.columns
 		if has_met_frame:
 			processed_met_frames = [
@@ -210,7 +211,7 @@ class TransformersTokenDatasetWithFrames(TransformersTokenDataset):
 											history_prev_sents=history_prev_sents,
 											fallback_label=fallback_label,
 											iob2=iob2,
-											frame_encoding_scheme=frame2id)
+											frame_encoding=frame2id)
 
 		inputs, outputs, input_words = \
 			contextualized_ex["input"], contextualized_ex["output"], contextualized_ex["input_words"]
@@ -414,7 +415,7 @@ def create_examples(df: pd.DataFrame, encoding_scheme: Dict[str, int],
 					history_prev_sents: int = 1,
 					fallback_label: Optional[str] = "O",
 					iob2: bool = False,
-					frame_encoding_scheme=None) -> Dict[str, List]:
+					frame_encoding=None) -> Dict[str, List]:
 	""" Creates examples (token inputs and token labels) out of data created using convert_komet.py.
 
 	:param df:
@@ -434,9 +435,7 @@ def create_examples(df: pd.DataFrame, encoding_scheme: Dict[str, int],
 	preprocess_labels = (lambda _lbls: preprocess_iob2(_lbls, fallback_label)) if iob2 else (lambda _lbls: _lbls)
 	preprocess_frames = (lambda _frames: preprocess_iob2(_frames, "O")) if iob2 else (lambda _lbls: _lbls)
 
-	has_frames = "met_frame" in df.columns
-	if has_frames:
-		assert frame_encoding_scheme is not None
+	has_frames = "met_frame" in df.columns and frame_encoding is not None
 
 	for curr_doc, curr_df in df.groupby("document_name"):
 		sorted_order = np.argsort(curr_df["idx_sentence_glob"].values)
@@ -460,7 +459,7 @@ def create_examples(df: pd.DataFrame, encoding_scheme: Dict[str, int],
 			if has_frames:
 				unencoded_frames = preprocess_frames(curr_row["met_frame"])
 				curr_ex_frames = [-100] * len(history_tokens) + \
-								 list(map(lambda str_frame: frame_encoding_scheme.get(str_frame, frame_encoding_scheme["O"]), unencoded_frames))
+								 list(map(lambda str_frame: frame_encoding.get(str_frame, frame_encoding["O"]), unencoded_frames))
 				assert len(curr_ex_frames) == len(curr_ex_labels)
 				examples_frames.append(curr_ex_frames)
 
@@ -494,5 +493,5 @@ if __name__ == "__main__":
 	dev_dataset = TransformersTokenDatasetWithFrames.from_dataframe(
 		dev_df, label_scheme="binary_2", max_length=96, stride=48,
 		history_prev_sents=1, tokenizer_or_tokenizer_name=tokenizer,
-		frame_encoding_scheme=frame_encoding
+		frame_encoding=frame_encoding
 	)
