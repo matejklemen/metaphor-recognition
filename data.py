@@ -294,7 +294,6 @@ class TransformersTokenDatasetWithFrames(TransformersTokenDataset):
 			enc_inputs["frames"] = torch.tensor(enc_frames)
 
 		train_dataset = TransformersTokenDatasetWithFrames(**enc_inputs)
-		print(torch.unique(train_dataset.frames))
 		return train_dataset
 
 
