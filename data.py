@@ -58,10 +58,12 @@ class TransformersTokenDataset(Dataset):
 	def has_labels(self):
 		return hasattr(self, "labels")
 
+	def has_frames(self):
+		return hasattr(self, "frames")
+
 	@staticmethod
 	def from_dataframe(df, label_scheme, max_length, stride, history_prev_sents=0,
-					   tokenizer_or_tokenizer_name: Union[str, AutoTokenizer] = "EMBEDDIA/sloberta"):
-		# TODO: many arguments may be redundant and could be inferred (move code from train_transformers?)
+					   tokenizer_or_tokenizer_name: Union[str, AutoTokenizer] = "EMBEDDIA/sloberta", **kwargs):
 		# TODO: need to adapt for case where no labels are given (i.e. test set in the wild)
 		scheme_info = extract_scheme_info(label_scheme)
 		primary_label_scheme = scheme_info["primary"]["name"]
@@ -177,6 +179,123 @@ class TransformersTokenDataset(Dataset):
 							   for _curr_preds in converted_preds]
 
 		return converted_preds
+
+
+class TransformersTokenDatasetWithFrames(TransformersTokenDataset):
+	@staticmethod
+	def from_dataframe(df, label_scheme, max_length, stride, history_prev_sents=0,
+					   tokenizer_or_tokenizer_name: Union[str, AutoTokenizer] = "EMBEDDIA/sloberta", **kwargs):
+		# TODO: need to adapt for case where no labels are given (i.e. test set in the wild)
+		scheme_info = extract_scheme_info(label_scheme)
+		primary_label_scheme = scheme_info["primary"]["name"]
+		fallback_label = scheme_info["fallback_label"]
+		iob2 = scheme_info["iob2"]
+
+		has_met_type = "met_type" in df.columns
+		if has_met_type:
+			non_iob2_scheme = f"{scheme_info['secondary']['name']}_{scheme_info['secondary']['num_pos_labels']}"
+			df["met_type"] = transform_met_types(df["met_type"], label_scheme=non_iob2_scheme)
+
+		frame2id = kwargs["frame_encoding_scheme"]
+		has_met_frame = "met_frame" in df.columns
+		if has_met_frame:
+			processed_met_frames = [
+				[mframe if mframe in frame2id else "O" for mframe in curr_mframes]
+				for curr_mframes in df["met_frame"].tolist()
+			]
+			df["met_frame"] = processed_met_frames
+
+		contextualized_ex = create_examples(df,
+											encoding_scheme=TAG2ID[primary_label_scheme],
+											history_prev_sents=history_prev_sents,
+											fallback_label=fallback_label,
+											iob2=iob2,
+											frame_encoding_scheme=frame2id)
+
+		inputs, outputs, input_words = \
+			contextualized_ex["input"], contextualized_ex["output"], contextualized_ex["input_words"]
+		frames = contextualized_ex["frames"] if has_met_frame else None
+
+		# [Original samples] are broken up into one or more [samples] for processing with the model
+		num_samples = len(inputs)
+		num_orig_samples = len(input_words)
+
+		if isinstance(tokenizer_or_tokenizer_name, str):
+			tokenizer = AutoTokenizer.from_pretrained(tokenizer_or_tokenizer_name)
+		else:
+			tokenizer = tokenizer_or_tokenizer_name
+
+		enc_inputs = tokenizer(
+			inputs, is_split_into_words=True,
+			max_length=max_length, padding="max_length", truncation=True,
+			return_overflowing_tokens=True, stride=stride,
+			return_tensors="pt"
+		)
+
+		is_start_encountered = np.zeros(num_samples, dtype=bool)
+		subsample_to_sample, subword_to_word = [], []
+		enc_outputs = []
+		enc_frames = []
+		for idx_ex, (curr_input_ids, idx_orig_ex) in enumerate(zip(enc_inputs["input_ids"],
+																   enc_inputs["overflow_to_sample_mapping"])):
+			subsample_to_sample.append(int(idx_orig_ex))
+			curr_word_ids = enc_inputs.word_ids(idx_ex)
+			curr_word_ids_shuf = []  # contains word IDs only for non-overlapping words, None for the rest
+
+			# where does sequence actually start, i.e. after <bos>
+			nonspecial_start = 0
+			while curr_word_ids[nonspecial_start] is not None:
+				nonspecial_start += 1
+
+			# when an example is broken up, all but the first sub-example have first `stride` tokens overlapping with prev.
+			ignore_n_overlapping = 0
+			if is_start_encountered[idx_orig_ex]:
+				ignore_n_overlapping = stride
+			else:
+				is_start_encountered[idx_orig_ex] = True
+
+			fixed_out = []
+			fixed_out += [LOSS_IGNORE_INDEX] * (nonspecial_start + ignore_n_overlapping)
+			curr_word_ids_shuf.extend([None] * (nonspecial_start + ignore_n_overlapping))
+
+			fixed_frames = []
+			fixed_frames += [LOSS_IGNORE_INDEX] * (nonspecial_start + ignore_n_overlapping)
+
+			for idx_subw, w_id in enumerate(curr_word_ids[(nonspecial_start + ignore_n_overlapping):],
+											start=(nonspecial_start + ignore_n_overlapping)):
+				if curr_word_ids[idx_subw] is None:
+					fixed_out.append(LOSS_IGNORE_INDEX)
+					fixed_frames.append(LOSS_IGNORE_INDEX)
+					curr_word_ids_shuf.append(None)
+				else:
+					fixed_out.append(outputs[idx_orig_ex][w_id])
+					if has_met_frame:
+						fixed_frames.append(frames[idx_orig_ex][w_id])
+
+					# overlapping with some previous sample
+					if outputs[idx_orig_ex][w_id] == LOSS_IGNORE_INDEX:
+						curr_word_ids_shuf.append(None)
+					else:
+						curr_word_ids_shuf.append(w_id)
+
+			enc_outputs.append(fixed_out)
+			subword_to_word.append(curr_word_ids_shuf)
+
+			if has_met_frame:
+				enc_frames.append(fixed_frames)
+
+		enc_inputs["subsample_to_sample"] = subsample_to_sample
+		enc_inputs["subword_to_word"] = subword_to_word
+		enc_inputs["labels"] = torch.tensor(enc_outputs)
+		enc_inputs["sample_words"] = input_words
+		del enc_inputs["overflow_to_sample_mapping"]
+
+		if has_met_frame:
+			enc_inputs["frames"] = torch.tensor(enc_frames)
+
+		train_dataset = TransformersTokenDatasetWithFrames(**enc_inputs)
+		print(torch.unique(train_dataset.frames))
+		return train_dataset
 
 
 def extract_scheme_info(scheme_str: str):
@@ -295,7 +414,8 @@ def load_df(file_path) -> pd.DataFrame:
 def create_examples(df: pd.DataFrame, encoding_scheme: Dict[str, int],
 					history_prev_sents: int = 1,
 					fallback_label: Optional[str] = "O",
-					iob2: bool = False) -> Dict[str, List]:
+					iob2: bool = False,
+					frame_encoding_scheme=None) -> Dict[str, List]:
 	""" Creates examples (token inputs and token labels) out of data created using convert_komet.py.
 
 	:param df:
@@ -310,14 +430,20 @@ def create_examples(df: pd.DataFrame, encoding_scheme: Dict[str, int],
 	examples_input = []
 	examples_labels = []
 	examples_input_words = []
+	examples_frames = []
 
-	preprocess_labels = (lambda lbls: preprocess_iob2(lbls, fallback_label)) if iob2 else (lambda lbls: lbls)
+	preprocess_labels = (lambda _lbls: preprocess_iob2(_lbls, fallback_label)) if iob2 else (lambda _lbls: _lbls)
+	preprocess_frames = (lambda _frames: preprocess_iob2(_frames, "O")) if iob2 else (lambda _lbls: _lbls)
+
+	has_frames = "met_frame" in df.columns
+	if has_frames:
+		assert frame_encoding_scheme is not None
 
 	for curr_doc, curr_df in df.groupby("document_name"):
 		sorted_order = np.argsort(curr_df["idx_sentence_glob"].values)
 		curr_df_inorder = curr_df.iloc[sorted_order]
 
-		tokens, labels = [], []
+		tokens, labels, frames = [], [], []
 		for idx_row in range(len(sorted_order)):
 			curr_row = curr_df_inorder.iloc[idx_row]
 			tokens.append(curr_row["sentence_words"])
@@ -332,14 +458,42 @@ def create_examples(df: pd.DataFrame, encoding_scheme: Dict[str, int],
 			curr_ex_labels = [-100] * len(history_tokens) + \
 							 list(map(lambda str_lbl: encoding_scheme.get(str_lbl, encoding_scheme[fallback_label]), unencoded_labels))
 
+			if has_frames:
+				unencoded_frames = preprocess_frames(curr_row["met_frame"])
+				curr_ex_frames = [-100] * len(history_tokens) + \
+								 list(map(lambda str_frame: frame_encoding_scheme.get(str_frame, frame_encoding_scheme["O"]), unencoded_frames))
+				assert len(curr_ex_frames) == len(curr_ex_labels)
+				examples_frames.append(curr_ex_frames)
+
 			assert len(curr_ex_tokens) == len(curr_ex_labels)
 
 			examples_input.append(curr_ex_tokens)
 			examples_labels.append(curr_ex_labels)
 			examples_input_words.append(curr_row["sentence_words"])
 
-	return {
+	ret_dict = {
 		"input": examples_input,
 		"output": examples_labels,
 		"input_words": examples_input_words
 	}
+	if has_frames:
+		ret_dict["frames"] = examples_frames
+
+	return ret_dict
+
+
+if __name__ == "__main__":
+	tokenizer = AutoTokenizer.from_pretrained("EMBEDDIA/sloberta")
+	dev_df = load_df("data.tsv")
+	# Extract top-level frame
+	dev_df["met_frame"] = [
+		[_frame if _frame == "O" else _frame.split("/")[0] for _frame in curr_frames]
+		for curr_frames in dev_df["met_frame"].tolist()
+	]
+
+	frame_encoding = {"O": 0, "idiom": 1, "means_of_action": 2, "adverbial_phrase": 3}
+	dev_dataset = TransformersTokenDatasetWithFrames.from_dataframe(
+		dev_df, label_scheme="binary_2", max_length=96, stride=48,
+		history_prev_sents=1, tokenizer_or_tokenizer_name=tokenizer,
+		frame_encoding_scheme=frame_encoding
+	)
