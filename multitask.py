@@ -147,8 +147,8 @@ class MetaphorMultiTaskController(MetaphorController):
 				logging.info(curr_dev_metrics_verbose)
 				wandb.log(wandb_dev_metrics)
 
-				curr_dev_metric = 0.5 * (curr_dev_metrics["metaphor_type"][self.optimized_metric] +
-										 curr_dev_metrics["metaphor_frame"][self.optimized_metric])
+				# NOTE: we (currently) don't optimize frame metrics, it is just used as "regularization"
+				curr_dev_metric = curr_dev_metrics["metaphor_type"][self.optimized_metric]
 				if curr_dev_metric > best_dev_metric:
 					logging.info(f"NEW BEST dev metric!")
 					best_dev_metric = curr_dev_metric
