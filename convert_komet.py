@@ -42,14 +42,14 @@ def resolve(element, expand_phrase: bool = False, only_noun_or_verb: bool = Fals
 			if element.attrib["subtype"] != "frame":
 				if element.attrib["subtype"] not in {"MRWd", "MRWi", "WIDLI", "MFlag"}:
 					logging.warning(f"Not covered: {element.attrib['subtype']}")
-
-				# Frame annotations in komet are prepended with "#met.", while those in g-komet are not -> Unify
-				if element.attrib["subtype"].startswith("#met."):
-					mtype = element.attrib["subtype"][5:]
-				else:
-					mtype = element.attrib["subtype"]
+				mtype = element.attrib["subtype"]
 			else:
-				new_frame_buffer += [element.attrib["ana"]]
+				# Frame annotations in komet are prepended with "#met.", while those in g-komet are not -> Unify
+				if element.attrib["ana"].startswith("#met."):
+					_mframe = element.attrib["ana"][5:]
+				else:
+					_mframe = element.attrib["ana"]
+				new_frame_buffer.append(_mframe)
 
 			parsed_data = []
 			for child in element:

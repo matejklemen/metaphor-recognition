@@ -29,6 +29,8 @@ def resolve(element, expand_phrase: bool = False, only_noun_or_verb: bool = Fals
 		if element.tag.endswith(("w", "pc")):
 			if idioms_are_metaphors and metaphor_type == "idiom":
 				metaphor_type = "MRWi"
+				# idiom is a frame in komet, but a separate type in g-komet
+				frame_buffer = ["idiom"] + frame_buffer
 
 			if element.tag.endswith("w"):
 				pos_tag = element.attrib["ana"].split(":")[-1][0]  # e.g., ana="mte:Ncmpa" -> "N"
