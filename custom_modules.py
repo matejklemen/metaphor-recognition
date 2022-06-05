@@ -1,3 +1,6 @@
+import logging
+import os
+
 import torch
 from torch import nn
 from transformers import AutoModel, AutoTokenizer
@@ -24,6 +27,22 @@ class AutoModelForTokenMultiClassification(nn.Module):
 			"metaphor_frame": TokenClassificationHead(self.hidden_size, self.num_frames, dropout_p=self.dropout_p,
 													  sd=self.encoder.config.initializer_range)
 		})
+
+		# Load pre-trained weights for output_heads if they exist in model dir
+		self.metaphor_type_path = os.path.join(pretrained_name_or_path, "metaphor_type.th")
+		if os.path.exists(self.metaphor_type_path):
+			logging.info(f"Loading weights for 'metaphor_type' token classification head from '{self.metaphor_type_path}'")
+			self.output_heads["metaphor_type"].load_state_dict(torch.load(self.metaphor_type_path))
+
+		self.metaphor_frame_path = os.path.join(pretrained_name_or_path, "metaphor_frame.th")
+		if os.path.exists(self.metaphor_frame_path):
+			logging.info(f"Loading weights for 'metaphor_frame' token classification head from '{self.metaphor_frame_path}'")
+			self.output_heads["metaphor_frame"].load_state_dict(torch.load(self.metaphor_frame_path))
+
+	def save_pretrained(self, model_dir):
+		self.encoder.save_pretrained(model_dir)
+		torch.save(self.output_heads["metaphor_type"].state_dict(), os.path.join(model_dir, "metaphor_type.th"))
+		torch.save(self.output_heads["metaphor_frame"].state_dict(), os.path.join(model_dir, "metaphor_frame.th"))
 
 	def forward(self, input_ids=None, attention_mask=None, token_type_ids=None,
 				position_ids=None, head_mask=None, inputs_embeds=None, labels=None,
