@@ -123,7 +123,7 @@ class MetaphorController:
 				assert independent_labels.shape == dev_dataset.labels.shape
 				dev_gt["word_labels"] = independent_labels
 
-			dev_gt["word_labels"] = torch.tensor(dev_dataset.align_word_predictions(dev_dataset.labels, pad=True))
+			dev_gt["word_labels"] = torch.tensor(dev_dataset.align_word_predictions(dev_gt["word_labels"], pad=True))
 
 		# Save initial version to prevent crash in case a non-trivial model can not be trained
 		self.save()
