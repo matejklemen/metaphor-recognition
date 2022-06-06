@@ -205,47 +205,26 @@ class MetaphorMultiTaskController(MetaphorController):
 		return metrics
 
 	def run_prediction(self, test_data, mcd_iters=0):
-		raise NotImplementedError()
 		assert mcd_iters >= 0
 		use_mcd = mcd_iters > 0
 		eff_iters = 1 if mcd_iters == 0 else mcd_iters
 
-		pred_probas = []
+		pred_probas_type = []
 		for idx_iter in range(eff_iters):
 			curr_res = self.eval_pass(test_data, train_mode=use_mcd)
-			pred_probas.append(curr_res["pred_probas"])
+			pred_probas_type.append(curr_res["pred_probas_type"])
 
-		pred_probas = torch.stack(pred_probas)  # [eff_iters, len(test_data), max_length, num_train_labels]
-		mean_probas = torch.mean(pred_probas, dim=0)  # [len(test_data), max_length, num_train_labels]
-		preds = torch.argmax(mean_probas, dim=-1)  # [len(test_data), max_length]
+		pred_probas_type = torch.stack(pred_probas_type)  # [eff_iters, len(test_data), max_length, num_train_labels]
+		mean_probas_type = torch.mean(pred_probas_type, dim=0)  # [len(test_data), max_length, num_train_labels]
+		preds_type = torch.argmax(mean_probas_type, dim=-1)  # [len(test_data), max_length]
 
 		# If IOB2 is used, convert the labels to a non-IOB2 equivalent
 		if self.iob2:
-			# Convert IOB2 to independent labels (remove B-, I-) for evaluation
-			independent_labels = []
-			for idx_ex in range(preds.shape[0]):
-				curr_labels = preds[idx_ex]
-				curr_processed = []
-				for _lbl in curr_labels.tolist():
-					if _lbl == LOSS_IGNORE_INDEX:
-						curr_processed.append(_lbl)
-					else:
-						str_tag = ID2TAG[self.prim_label_scheme][_lbl]
-						if str_tag == self.fallback_str:
-							curr_processed.append(TAG2ID[self.sec_label_scheme][str_tag])
-						else:
-							# without "B-" or "I-"
-							curr_processed.append(TAG2ID[self.sec_label_scheme][str_tag[2:]])
-
-				independent_labels.append(curr_processed)
-
-			independent_labels = torch.tensor(independent_labels)
-			assert independent_labels.shape == preds.shape
-			preds = independent_labels
+			raise NotImplementedError()
 
 		return {
-			"pred_probas": pred_probas,
-			"preds": preds
+			"pred_probas_type": pred_probas_type,
+			"preds_type": preds_type
 		}
 
 	@torch.no_grad()
