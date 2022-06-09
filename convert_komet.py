@@ -20,7 +20,7 @@ def resolve(element, expand_phrase: bool = False, only_noun_or_verb: bool = Fals
 		MRWi = indirect metaphor
 		WIDLI = borderline (cannot determine from context whether a word's metaphorical or basic meaning is intended)
 		MFlag = metaphor signal
-		MRWimp = MRWi, multipart? -> skip?
+		MRWimp = IMPLIED METAPHOR
 		* = ???
 		Some tokens have multiple annotations??
 	"""
