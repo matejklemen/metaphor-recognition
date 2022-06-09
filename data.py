@@ -1,6 +1,5 @@
 import ast
 import itertools
-import logging
 from typing import Dict, Optional, List, Iterable, Union
 
 import numpy as np
@@ -10,7 +9,7 @@ from torch.utils.data import Dataset
 from transformers import AutoTokenizer
 
 
-POS_MET_TYPES = ["MRWi", "MRWd", "WIDLI", "MFlag"]
+POS_MET_TYPES = ["MRWi", "MRWd", "MRWimp", "WIDLI", "MFlag", "bridge"]
 TAG2ID = {
 	"binary": {_tag: _i for _i, _tag in enumerate(["not_metaphor", "metaphor"])},
 	"binary_iob2": {_tag: _i for _i, _tag in enumerate(["not_metaphor"] + [f"{_prefix}-{_main}"
