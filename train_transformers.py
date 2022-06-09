@@ -85,7 +85,11 @@ if __name__ == "__main__":
 	train_df = load_df(args.train_path)
 	dev_df = load_df(args.dev_path)
 
-	tokenizer = AutoTokenizer.from_pretrained(args.pretrained_name_or_path)
+	if "roberta" in args.pretrained_name_or_path:
+		# Hack, RoBERTa models need a specific tokenizer argument
+		tokenizer = AutoTokenizer.from_pretrained(args.pretrained_name_or_path, add_prefix_space=True)
+	else:
+		tokenizer = AutoTokenizer.from_pretrained(args.pretrained_name_or_path)
 	model = AutoModelForTokenClassification.from_pretrained(args.pretrained_name_or_path,
 															num_labels=num_train_labels).to(DEVICE)
 	controller = MetaphorController(

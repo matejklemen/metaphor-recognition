@@ -112,7 +112,11 @@ if __name__ == "__main__":
 		for curr_frames in dev_df["met_frame"].tolist()
 	]
 
-	tokenizer = AutoTokenizer.from_pretrained(args.pretrained_name_or_path)
+	if "roberta" in args.pretrained_name_or_path:
+		# Hack, RoBERTa models need a specific tokenizer argument
+		tokenizer = AutoTokenizer.from_pretrained(args.pretrained_name_or_path, add_prefix_space=True)
+	else:
+		tokenizer = AutoTokenizer.from_pretrained(args.pretrained_name_or_path)
 	model = AutoModelForTokenMultiClassification(args.pretrained_name_or_path,
 												 num_types=num_train_mtypes,
 												 num_frames=num_train_mframes).to(DEVICE)
