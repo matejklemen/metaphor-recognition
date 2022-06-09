@@ -436,9 +436,14 @@ def create_examples(df: pd.DataFrame, encoding_scheme: Dict[str, int],
 	preprocess_frames = (lambda _frames: preprocess_iob2(_frames, "O")) if iob2 else (lambda _lbls: _lbls)
 
 	has_frames = "met_frame" in df.columns and frame_encoding is not None
+	has_sentence_indices = "idx_sentence_glob" in df.columns
 
 	for curr_doc, curr_df in df.groupby("document_name"):
-		sorted_order = np.argsort(curr_df["idx_sentence_glob"].values)
+		if has_sentence_indices:
+			sorted_order = np.argsort(curr_df["idx_sentence_glob"].values)
+		else:
+			sorted_order = np.arange(curr_df.shape[0])
+
 		curr_df_inorder = curr_df.iloc[sorted_order]
 
 		tokens, labels, frames = [], [], []
