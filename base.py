@@ -72,6 +72,7 @@ class MetaphorController:
 			}, fp=f_config, indent=4)
 
 		self.model.save_pretrained(self.model_dir)
+		torch.save(self.optimizer.state_dict(), os.path.join(self.model_dir, "optimizer_state.th"))
 
 	@staticmethod
 	def load(controller_dir, **override_kwargs):
@@ -91,7 +92,13 @@ class MetaphorController:
 			logging.info(f"Overriding config:{old_value}{config_key} = {new_value}")
 			config[config_key] = new_value
 
-		return MetaphorController(**config)
+		controller = MetaphorController(**config)
+		path_to_optimizer = os.path.join(controller_dir, "optimizer_state.th")
+		if os.path.exists(path_to_optimizer):
+			logging.info(f"Found existing optimizer state for model being loaded ({path_to_optimizer})!")
+			controller.optimizer.load_state_dict(torch.load(path_to_optimizer))
+
+		return controller
 
 	def run_training(self, train_dataset, dev_dataset=None, num_epochs=1):
 		ts = time()
