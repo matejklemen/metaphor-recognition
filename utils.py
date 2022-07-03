@@ -1,4 +1,5 @@
-from sklearn.metrics import precision_score, recall_score, f1_score
+from sklearn.metrics import precision_score, recall_score, f1_score, \
+	average_precision_score, precision_recall_curve
 
 from data import LOSS_IGNORE_INDEX
 
@@ -25,6 +26,25 @@ def token_f1(true_labels, pred_labels, pos_label: int = 1, ignore_label: int = -
 	valid_true = true_labels[valid_mask] == pos_label
 	valid_pred = pred_labels[valid_mask] == pos_label
 	return f1_score(y_true=valid_true, y_pred=valid_pred, average="binary", pos_label=1)
+
+
+def token_average_precision(true_labels, pos_probas, ignore_label: int = -100):
+	# pos_probas... predicted probability for the positive class (1)
+	valid_mask = true_labels != ignore_label
+	assert len(torch.unique(true_labels[valid_mask])) == 2, \
+		"token_average_precision is implemented only for a binary task"
+
+	return average_precision_score(true_labels[valid_mask], pos_probas[valid_mask])
+
+
+def token_pr_curve(true_labels, pos_probas, ignore_label: int = -100):
+	# pos_probas... predicted probability for the positive class (1)
+	valid_mask = true_labels != ignore_label
+	assert len(torch.unique(true_labels[valid_mask])) == 2, \
+		"token_pr_curve is implemented only for a binary task"
+
+	return precision_recall_curve(true_labels[valid_mask], pos_probas[valid_mask])
+
 
 # TODO: define boilerplate here, use named_parameters for placeholders!!
 VIS_BOILERPLATE = \
@@ -124,6 +144,10 @@ if __name__ == "__main__":
 	print(token_precision(t, p, pos_label=1))
 	print(token_recall(t, p, pos_label=1))
 	print(token_f1(t, p, pos_label=1))
+
+	t_bin = torch.tensor([[-100, 0, 0, 1, 1, -100]])
+	p_pos = torch.tensor([[0.5, 0.1, 0.4, 0.35, 0.8, 0.2]])
+	print(token_average_precision(true_labels=t_bin, pos_probas=p_pos))  # 0.833.. (sklearn example)
 
 	tokens = ['Moderen', ',', 'čist', 'in', 'preprost', '.']
 	preds = ['O', 'O', 'MRWi', 'O', 'O', 'O']
