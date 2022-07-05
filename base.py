@@ -10,8 +10,8 @@ from torch.utils.data import Subset, DataLoader
 from tqdm import tqdm
 from transformers import AutoTokenizer, AutoModelForTokenClassification
 
-from data import TAG2ID, ID2TAG, extract_scheme_info, LOSS_IGNORE_INDEX
-from utils import token_precision, token_recall, token_f1
+from data import TAG2ID, ID2TAG, extract_scheme_info, LOSS_IGNORE_INDEX, TransformersTokenDataset
+from utils import token_precision, token_recall, token_f1, token_average_precision
 
 
 class MetaphorController:
@@ -105,7 +105,6 @@ class MetaphorController:
 		num_train, num_dev = len(train_dataset), 0
 		dev_gt = {}
 		if dev_dataset is not None:
-			# TODO: extract boundaries of metaphors Set([(i_start, i_end), ...]) for entity-level evaluation?
 			dev_gt = {"word_labels": dev_dataset.labels}
 			num_dev = len(dev_dataset)
 			if self.iob2:
@@ -129,8 +128,6 @@ class MetaphorController:
 				independent_labels = torch.tensor(independent_labels)
 				assert independent_labels.shape == dev_dataset.labels.shape
 				dev_gt["word_labels"] = independent_labels
-
-			dev_gt["word_labels"] = torch.tensor(dev_dataset.align_word_predictions(dev_gt["word_labels"], pad=True))
 
 		# Save initial version to prevent crash in case a non-trivial model can not be trained
 		self.save()
@@ -163,10 +160,14 @@ class MetaphorController:
 					continue
 
 				dev_res = self.eval_pass(dev_dataset, batch_size=(2 * self.batch_size))
-				dev_preds = torch.argmax(dev_res["pred_probas"], dim=-1).cpu()
+				dev_probas = dev_res["pred_probas"].cpu()
+				dev_preds = torch.argmax(dev_probas, dim=-1)
 
 				# If IOB2 is used, convert the labels to a non-IOB2 equivalent before token-level evaluation
 				if self.iob2:
+					dev_probas = None  # TODO: conversion similar to labels needs to be implemented
+					logging.warning("Not implemented: iob2=True, prediction probability metrics will not be computed")
+
 					# Convert IOB2 to independent labels (remove B-, I-) for evaluation
 					independent_labels = []
 					for idx_dev in range(dev_preds.shape[0]):
@@ -189,10 +190,10 @@ class MetaphorController:
 					assert independent_labels.shape == dev_preds.shape
 					dev_preds = independent_labels
 
-				dev_preds = torch.tensor(dev_dataset.align_word_predictions(dev_preds, pad=True))
-
-				curr_dev_metrics = self.compute_metrics(true_labels=dev_gt["word_labels"],
-														predicted_labels=dev_preds)
+				curr_dev_metrics = self.compute_metrics(dev_dataset,
+														true_labels=dev_gt["word_labels"],
+														pred_labels=dev_preds,
+														pred_probas=dev_probas)
 				curr_dev_metrics["loss"] = dev_res['loss'] / max(1, dev_res['num_batches'])
 				logging.info(f"Dev loss: {curr_dev_metrics['loss']:.4f}")
 
@@ -218,15 +219,34 @@ class MetaphorController:
 		# Reload best saved model
 		self.model = AutoModelForTokenClassification.from_pretrained(self.model_dir).to(self.device)
 
-	def compute_metrics(self, true_labels, predicted_labels):
+	def compute_metrics(self,
+						eval_dataset: TransformersTokenDataset,
+						true_labels: torch.Tensor,
+						pred_labels: torch.Tensor,
+						**kwargs):
+		# Align subword predictions/annotations to word-level for comparable evaluation
+		# (words are the same across models, subwords are not)
+		pred_aligned = torch.tensor(eval_dataset.align_word_predictions(pred_labels, pad=True))
+		true_aligned = torch.tensor(eval_dataset.align_word_predictions(true_labels, pad=True))
+
+		pred_probas = kwargs.get("pred_probas", None)
+
 		metrics = {}
 		pos_labels = list(range(1, 1 + self.num_eval_labels))  # all but the fallback label (eval on pos labels)
 		macro_p, macro_r, macro_f1 = 0.0, 0.0, 0.0
 		for curr_label in pos_labels:
 			curr_label_str = ID2TAG[self.sec_label_scheme][curr_label]
-			metrics[f"p_{curr_label_str}"] = token_precision(true_labels, predicted_labels, pos_label=curr_label)
-			metrics[f"r_{curr_label_str}"] = token_recall(true_labels, predicted_labels, pos_label=curr_label)
-			metrics[f"f1_{curr_label_str}"] = token_f1(true_labels, predicted_labels, pos_label=curr_label)
+			metrics[f"p_{curr_label_str}"] = token_precision(true_aligned, pred_aligned, pos_label=curr_label)
+			metrics[f"r_{curr_label_str}"] = token_recall(true_aligned, pred_aligned, pos_label=curr_label)
+			metrics[f"f1_{curr_label_str}"] = token_f1(true_aligned, pred_aligned, pos_label=curr_label)
+
+			if pred_probas is not None:
+				curr_label_probas = torch.tensor(eval_dataset.align_word_predictions(pred_probas[:, :, curr_label], pad=True))
+				# Convert true labels to binary labels: curr_label vs not(curr_label)
+				true_aligned_bin = true_aligned.clone()
+				mask_other_labels = torch.logical_and(true_aligned_bin != -100, true_aligned_bin != curr_label)
+				true_aligned_bin[mask_other_labels] = 0
+				metrics[f"ap_{curr_label_str}"] = token_average_precision(true_aligned_bin, curr_label_probas)
 
 			macro_p += metrics[f"p_{curr_label_str}"]
 			macro_r += metrics[f"r_{curr_label_str}"]

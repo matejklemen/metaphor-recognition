@@ -10,7 +10,7 @@ from tqdm import tqdm
 
 from base import MetaphorController
 from custom_modules import AutoModelForTokenMultiClassification
-from data import extract_scheme_info, ID2TAG
+from data import extract_scheme_info, ID2TAG, TransformersTokenDataset
 from utils import token_precision, token_recall, token_f1
 
 
@@ -85,8 +85,8 @@ class MetaphorMultiTaskController(MetaphorController):
 		if dev_dataset is not None:
 			num_dev = len(dev_dataset)
 
-			dev_gt["word_labels"] = torch.tensor(dev_dataset.align_word_predictions(dev_dataset.labels, pad=True))
-			dev_gt["word_frame_labels"] = torch.tensor(dev_dataset.align_word_predictions(dev_dataset.frame_labels, pad=True))
+			dev_gt["subword_labels"] = dev_dataset.labels
+			dev_gt["subword_frame_labels"] = dev_dataset.frame_labels
 
 		# Save initial version to prevent crash in case a non-trivial model can not be trained
 		self.save()
@@ -118,16 +118,19 @@ class MetaphorMultiTaskController(MetaphorController):
 					continue
 
 				dev_res = self.eval_pass(dev_dataset, batch_size=(2 * self.batch_size))
-				dev_type_preds = torch.argmax(dev_res["pred_probas_type"], dim=-1).cpu()
-				dev_type_preds = torch.tensor(dev_dataset.align_word_predictions(dev_type_preds, pad=True))
-
+				dev_type_probas = dev_res["pred_probas_type"].cpu()
+				dev_type_preds = torch.argmax(dev_type_probas, dim=-1)
 				dev_frame_preds = torch.argmax(dev_res["pred_probas_frame"], dim=-1).cpu()
-				dev_frame_preds = torch.tensor(dev_dataset.align_word_predictions(dev_frame_preds, pad=True))
+				if self.iob2:
+					dev_type_probas = None  # TODO: not implemented
 
-				curr_dev_metrics = {
-					"metaphor_type": self.compute_type_metrics(true_labels=dev_gt["word_labels"], predicted_labels=dev_type_preds),
-					"metaphor_frame": self.compute_frame_metrics(true_labels=dev_gt["word_frame_labels"], predicted_labels=dev_frame_preds)
-				}
+				curr_dev_metrics = self.compute_metrics(dev_dataset,
+														true_labels=dev_gt["subword_labels"],
+														pred_labels=dev_type_preds,
+														frame_true_labels=dev_gt["subword_frame_labels"],
+														frame_pred_labels=dev_frame_preds,
+														pred_probas=dev_type_probas)
+
 				wandb_dev_metrics = {}
 				# For compatibility with single-task learning logging, store metaphor_type metrics as primary metrics
 				for metric_name, metric_val in sorted(curr_dev_metrics["metaphor_type"].items(), key=lambda tup: tup[0]):
@@ -165,43 +168,43 @@ class MetaphorMultiTaskController(MetaphorController):
 														  num_types=self.num_train_labels,
 														  num_frames=self.num_train_frames).to(self.device)
 
-	# TODO: quick hack, redundant code for computing metrics
-	def compute_type_metrics(self, true_labels, predicted_labels):
+	def compute_metrics(self,
+						eval_dataset: TransformersTokenDataset,
+						true_labels: torch.Tensor,
+						pred_labels: torch.Tensor,
+						**kwargs):
 		metrics = {}
-		pos_labels = list(range(1, 1 + self.num_eval_labels))  # all but the fallback label (eval on pos labels)
-		macro_p, macro_r, macro_f1 = 0.0, 0.0, 0.0
-		for curr_label in pos_labels:
-			curr_label_str = ID2TAG[self.sec_label_scheme][curr_label]
-			metrics[f"p_{curr_label_str}"] = token_precision(true_labels, predicted_labels, pos_label=curr_label)
-			metrics[f"r_{curr_label_str}"] = token_recall(true_labels, predicted_labels, pos_label=curr_label)
-			metrics[f"f1_{curr_label_str}"] = token_f1(true_labels, predicted_labels, pos_label=curr_label)
+		metrics["metaphor_type"] = super().compute_metrics(
+			eval_dataset, true_labels, pred_labels, pred_probas=kwargs.get("pred_probas", None)
+		)
 
-			macro_p += metrics[f"p_{curr_label_str}"]
-			macro_r += metrics[f"r_{curr_label_str}"]
-			macro_f1 += metrics[f"f1_{curr_label_str}"]
+		frame_true_labels_aligned = torch.tensor(eval_dataset.align_word_predictions(kwargs["frame_true_labels"], pad=True))
+		frame_pred_labels_aligned = torch.tensor(eval_dataset.align_word_predictions(kwargs["frame_pred_labels"], pad=True))
 
-		metrics[f"p_macro"] = macro_p / max(1, len(pos_labels))
-		metrics[f"r_macro"] = macro_r / max(1, len(pos_labels))
-		metrics[f"f1_macro"] = macro_f1 / max(1, len(pos_labels))
-		return metrics
-
-	def compute_frame_metrics(self, true_labels, predicted_labels):
-		metrics = {}
+		frame_metrics = {}
 		pos_labels = list(range(1, 1 + self.num_eval_frames))  # all but the fallback label (eval on pos labels)
 		macro_p, macro_r, macro_f1 = 0.0, 0.0, 0.0
 		for curr_label in pos_labels:
 			curr_label_str = self.id2frame[curr_label]
-			metrics[f"p_{curr_label_str}"] = token_precision(true_labels, predicted_labels, pos_label=curr_label)
-			metrics[f"r_{curr_label_str}"] = token_recall(true_labels, predicted_labels, pos_label=curr_label)
-			metrics[f"f1_{curr_label_str}"] = token_f1(true_labels, predicted_labels, pos_label=curr_label)
+			frame_metrics[f"p_{curr_label_str}"] = token_precision(frame_true_labels_aligned,
+																   frame_pred_labels_aligned,
+																   pos_label=curr_label)
+			frame_metrics[f"r_{curr_label_str}"] = token_recall(frame_true_labels_aligned,
+																frame_pred_labels_aligned,
+																pos_label=curr_label)
+			frame_metrics[f"f1_{curr_label_str}"] = token_f1(frame_true_labels_aligned,
+															 frame_pred_labels_aligned,
+															 pos_label=curr_label)
 
-			macro_p += metrics[f"p_{curr_label_str}"]
-			macro_r += metrics[f"r_{curr_label_str}"]
-			macro_f1 += metrics[f"f1_{curr_label_str}"]
+			macro_p += frame_metrics[f"p_{curr_label_str}"]
+			macro_r += frame_metrics[f"r_{curr_label_str}"]
+			macro_f1 += frame_metrics[f"f1_{curr_label_str}"]
 
-		metrics[f"p_macro"] = macro_p / max(1, len(pos_labels))
-		metrics[f"r_macro"] = macro_r / max(1, len(pos_labels))
-		metrics[f"f1_macro"] = macro_f1 / max(1, len(pos_labels))
+		frame_metrics[f"p_macro"] = macro_p / max(1, len(pos_labels))
+		frame_metrics[f"r_macro"] = macro_r / max(1, len(pos_labels))
+		frame_metrics[f"f1_macro"] = macro_f1 / max(1, len(pos_labels))
+		metrics["metaphor_frame"] = frame_metrics
+
 		return metrics
 
 	def run_prediction(self, test_data, mcd_iters=0):

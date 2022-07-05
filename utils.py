@@ -1,5 +1,6 @@
 from sklearn.metrics import precision_score, recall_score, f1_score, \
 	average_precision_score, precision_recall_curve
+import torch
 
 from data import LOSS_IGNORE_INDEX
 
@@ -130,8 +131,6 @@ def visualize_token_predictions(tokens, token_predicted, token_true=None, uninte
 
 
 if __name__ == "__main__":
-	import torch
-
 	t = torch.tensor([
 		[-100, 1, 1, 1, 2, 2, 0, -100],
 		[-100, 1, 0, 1, 2, 2, -100, -100],
