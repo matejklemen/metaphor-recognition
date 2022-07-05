@@ -107,7 +107,8 @@ if __name__ == "__main__":
 					 for _curr_true in test_true]
 		processed_test_df["true_met_type"] = test_true
 
-		test_metrics = controller.compute_metrics(true_labels=test_dataset.labels,
+		test_metrics = controller.compute_metrics(test_dataset,
+												  true_labels=test_dataset.labels,
 												  pred_labels=test_res["preds_type"].cpu(),
 												  pred_probas=test_probas)
 

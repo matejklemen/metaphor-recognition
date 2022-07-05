@@ -125,7 +125,9 @@ if __name__ == "__main__":
 		test_probas = test_res["pred_probas"].cpu()
 		if controller.iob2:
 			test_probas = None
-		test_metrics = controller.compute_metrics(pred_labels=test_res["preds"].cpu(), true_labels=test_true,
+		test_metrics = controller.compute_metrics(test_dataset,
+												  pred_labels=test_res["preds"].cpu(),
+												  true_labels=test_true,
 												  pred_probas=test_probas)
 
 		test_metrics_verbose = []
