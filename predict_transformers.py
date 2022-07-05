@@ -141,7 +141,7 @@ if __name__ == "__main__":
 	processed_test_df["pred_met_type"] = test_preds
 
 	with open(os.path.join(args.experiment_dir, "pred_visualization.html"), "w", encoding="utf-8") as f:
-		visualization_html = visualize_token_predictions(test_dataset.sample_words, test_preds, test_true)
+		visualization_html = visualize_token_predictions(test_dataset.sample_words, test_preds, test_true_meta)
 		print(visualization_html, file=f)
 
 	with open(os.path.join(args.experiment_dir, "prediction_args.json"), "w", encoding="utf-8") as f:
