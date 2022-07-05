@@ -9,7 +9,7 @@ from torch.utils.data import Dataset
 from transformers import AutoTokenizer
 
 
-POS_MET_TYPES = ["MRWi", "MRWd", "MRWimp", "WIDLI", "MFlag", "bridge"]
+POS_MET_TYPES = ["MRWi", "MRWd", "MFlag", "WIDLI", "MRWimp", "bridge"]
 TAG2ID = {
 	"binary": {_tag: _i for _i, _tag in enumerate(["not_metaphor", "metaphor"])},
 	"binary_iob2": {_tag: _i for _i, _tag in enumerate(["not_metaphor"] + [f"{_prefix}-{_main}"
@@ -372,11 +372,12 @@ def preprocess_iob2(labels: List[str], fallback_label: str = "O") -> List[str]:
 
 
 def transform_met_types(met_types: Iterable[Iterable[str]], label_scheme: str):
-	""" Converts metaphore type using chosen label scheme. label_scheme determines which labels are kept as positive
+	""" Converts metaphor type using chosen label scheme. label_scheme determines which labels are kept as positive
 	and how they are kept. See `TAG2ID` and `POS_MET_TYPES` in data.py to see priority.
 	"""
-	assert label_scheme in ["binary_1", "binary_2", "binary_3", "binary_4",
-							"independent_1", "independent_2", "independent_3", "independent_4"]
+	assert label_scheme in list(map(lambda tup: "_".join(tup),
+									itertools.product(["binary", "independent"],
+													  map(str, range(1, 1 + len(POS_MET_TYPES))))))
 	_, first_n = label_scheme.split("_")
 	POS_LABELS_SET = set(POS_MET_TYPES[: int(first_n)])
 
