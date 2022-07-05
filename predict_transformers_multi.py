@@ -92,8 +92,8 @@ if __name__ == "__main__":
 	processed_test_df = pd.DataFrame({"sentence_words": test_dataset.sample_words})
 
 	test_res = controller.run_prediction(test_dataset, mcd_iters=args.mcd_iters)
+	test_probas = test_res["pred_probas_type"].cpu()
 	test_preds = test_dataset.align_word_predictions(test_res["preds_type"].cpu(), pad=False)
-	test_preds_for_eval = torch.tensor(test_dataset.align_word_predictions(test_res["preds_type"].cpu(), pad=True))
 
 	test_true = None
 	if test_dataset.has_labels():
@@ -102,13 +102,14 @@ if __name__ == "__main__":
 		if controller.scheme_info["iob2"]:
 			raise NotImplementedError()
 
-		test_true_for_eval = torch.tensor(test_dataset.align_word_predictions(test_true, pad=True))
 		test_true = test_dataset.align_word_predictions(test_true, pad=False)
 		test_true = [list(map(lambda _curr_lbl: ID2TAG[controller.sec_label_scheme].get(_curr_lbl, _curr_lbl), _curr_true))
 					 for _curr_true in test_true]
 		processed_test_df["true_met_type"] = test_true
 
-		test_metrics = controller.compute_type_metrics(predicted_labels=test_preds_for_eval, true_labels=test_true_for_eval)
+		test_metrics = controller.compute_metrics(true_labels=test_dataset.labels,
+												  pred_labels=test_res["preds_type"].cpu(),
+												  pred_probas=test_probas)
 
 		test_metrics_verbose = []
 		for metric_name, metric_val in sorted(test_metrics.items(), key=lambda tup: tup[0]):
