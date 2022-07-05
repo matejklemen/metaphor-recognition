@@ -119,7 +119,7 @@ if __name__ == "__main__":
 
 		test_true_meta = test_dataset.align_word_predictions(test_true, pad=False)
 		test_true_meta = [list(map(lambda _curr_lbl: ID2TAG[controller.sec_label_scheme].get(_curr_lbl, _curr_lbl), _curr_true))
-						  for _curr_true in test_true]
+						  for _curr_true in test_true_meta]
 		processed_test_df["true_met_type"] = test_true_meta
 
 		test_probas = test_res["pred_probas"].cpu()
