@@ -92,7 +92,7 @@ if __name__ == "__main__":
 	processed_test_df = pd.DataFrame({"sentence_words": test_dataset.sample_words})
 
 	test_res = controller.run_prediction(test_dataset, mcd_iters=args.mcd_iters)
-	test_probas = test_res["pred_probas_type"].cpu()
+	test_probas = torch.mean(test_res["pred_probas_type"].cpu(), dim=0)
 	test_preds = test_dataset.align_word_predictions(test_res["preds_type"].cpu(), pad=False)
 
 	test_true = None

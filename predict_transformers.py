@@ -122,7 +122,7 @@ if __name__ == "__main__":
 						  for _curr_true in test_true_meta]
 		processed_test_df["true_met_type"] = test_true_meta
 
-		test_probas = test_res["pred_probas"].cpu()
+		test_probas = torch.mean(test_res["pred_probas"].cpu(), dim=0)
 		if controller.iob2:
 			test_probas = None
 		test_metrics = controller.compute_metrics(test_dataset,

@@ -296,7 +296,7 @@ class MetaphorController:
 			preds = independent_labels
 
 		return {
-			"pred_probas": pred_probas,
+			"pred_probas": pred_probas,  # NOTE: unagreggated!
 			"preds": preds
 		}
 
