@@ -90,7 +90,6 @@ if __name__ == "__main__":
 
 	test_res = controller.run_prediction(test_dataset, mcd_iters=args.mcd_iters)
 	test_preds = test_dataset.align_word_predictions(test_res["preds"].cpu(), pad=False)
-	test_preds_for_eval = torch.tensor(test_dataset.align_word_predictions(test_res["preds"].cpu(), pad=True))
 
 	test_true = None
 	if test_dataset.has_labels():
@@ -118,13 +117,16 @@ if __name__ == "__main__":
 			assert independent_labels.shape == test_true.shape
 			test_true = independent_labels
 
-		test_true_for_eval = torch.tensor(test_dataset.align_word_predictions(test_true, pad=True))
-		test_true = test_dataset.align_word_predictions(test_true, pad=False)
-		test_true = [list(map(lambda _curr_lbl: ID2TAG[controller.sec_label_scheme].get(_curr_lbl, _curr_lbl), _curr_true))
-					 for _curr_true in test_true]
-		processed_test_df["true_met_type"] = test_true
+		test_true_meta = test_dataset.align_word_predictions(test_true, pad=False)
+		test_true_meta = [list(map(lambda _curr_lbl: ID2TAG[controller.sec_label_scheme].get(_curr_lbl, _curr_lbl), _curr_true))
+						  for _curr_true in test_true]
+		processed_test_df["true_met_type"] = test_true_meta
 
-		test_metrics = controller.compute_metrics(predicted_labels=test_preds_for_eval, true_labels=test_true_for_eval)
+		test_probas = test_res["pred_probas"].cpu()
+		if controller.iob2:
+			test_probas = None
+		test_metrics = controller.compute_metrics(pred_labels=test_res["preds"].cpu(), true_labels=test_true,
+												  pred_probas=test_probas)
 
 		test_metrics_verbose = []
 		for metric_name, metric_val in sorted(test_metrics.items(), key=lambda tup: tup[0]):
