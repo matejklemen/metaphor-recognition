@@ -1,5 +1,6 @@
 import ast
 import itertools
+import logging
 from typing import Dict, Optional, List, Iterable, Union
 
 import numpy as np
@@ -179,6 +180,67 @@ class TransformersTokenDataset(Dataset):
 							   for _curr_preds in converted_preds]
 
 		return converted_preds
+
+
+class TransformersSentenceDataset:
+	def __init__(self, **kwargs):
+		assert "input_ids" in kwargs
+
+		self.metadata_attrs = ["sample_words"]
+		self.valid_attrs = []
+		for attr, values in kwargs.items():
+			if attr not in self.metadata_attrs:
+				self.valid_attrs.append(attr)
+			setattr(self, attr, values)
+
+		assert len(self.valid_attrs) > 0
+		self.num_unique_samples = int(self.input_ids.shape[0])
+
+	def has_labels(self):
+		return hasattr(self, "labels")
+
+	def __getitem__(self, item):
+		return {k: getattr(self, k)[item] for k in self.valid_attrs}
+
+	def __len__(self):
+		return len(getattr(self, self.valid_attrs[0]))
+
+	@staticmethod
+	def from_dataframe(df, label_scheme, max_length, history_prev_sents=0,
+					   tokenizer_or_tokenizer_name: Union[str, AutoTokenizer] = "EMBEDDIA/sloberta", **kwargs):
+		scheme_info = extract_scheme_info(label_scheme)
+		primary_label_scheme = scheme_info["primary"]["name"]
+
+		# Assuming binary label scheme for sentence-level metaphor detection (has metaphor vs doesn't have metaphor)
+		assert primary_label_scheme == "binary"
+		fallback_label = scheme_info["fallback_label"]
+
+		has_met_type = "met_type" in df.columns
+		if has_met_type:
+			non_iob2_scheme = f"{scheme_info['secondary']['name']}_{scheme_info['secondary']['num_pos_labels']}"
+			df["met_type"] = transform_met_types(df["met_type"], label_scheme=non_iob2_scheme)
+
+		contextualized_ex = create_examples_sentence(df,
+													 encoding_scheme=TAG2ID[primary_label_scheme],
+													 history_prev_sents=history_prev_sents,
+													 fallback_label=fallback_label)
+		inputs, outputs, input_words = \
+			contextualized_ex["input"], contextualized_ex["output"], contextualized_ex["input_words"]
+
+		if isinstance(tokenizer_or_tokenizer_name, str):
+			tokenizer = AutoTokenizer.from_pretrained(tokenizer_or_tokenizer_name)
+		else:
+			tokenizer = tokenizer_or_tokenizer_name
+
+		enc_inputs = tokenizer.batch_encode_plus(
+			inputs, is_split_into_words=True, max_length=max_length, padding="max_length", truncation="longest_first",
+			return_tensors="pt"
+		)
+		enc_inputs["labels"] = torch.tensor(outputs)
+		enc_inputs["sample_words"] = input_words
+
+		dataset = TransformersSentenceDataset(**enc_inputs)
+		return dataset
 
 
 class TransformersTokenDatasetWithFrames(TransformersTokenDataset):
@@ -411,6 +473,55 @@ def load_df(file_path) -> pd.DataFrame:
 	return df
 
 
+def create_examples_sentence(df: pd.DataFrame, encoding_scheme: Dict[str, int],
+					history_prev_sents: int = 1,
+					fallback_label: Optional[str] = "O",
+					frame_encoding=None) -> Dict[str, List]:
+	if frame_encoding is not None:
+		logging.warning("`frame_encoding` is currently unimplemented for sentence-level detection and ignored")
+
+	assert history_prev_sents >= 0
+	examples_input = []
+	examples_labels = []
+	examples_input_words = []
+
+	has_sentence_indices = "idx_sentence_glob" in df.columns
+	for curr_doc, curr_df in df.groupby("document_name"):
+		if has_sentence_indices:
+			sorted_order = np.argsort(curr_df["idx_sentence_glob"].values)
+		else:
+			sorted_order = np.arange(curr_df.shape[0])
+
+		curr_df_inorder = curr_df.iloc[sorted_order]
+		tokens, labels = [], []
+		for idx_row in range(len(sorted_order)):
+			curr_row = curr_df_inorder.iloc[idx_row]
+			tokens.append(curr_row["sentence_words"])
+			labels.append(curr_row["met_type"])
+
+			history_tokens = list(itertools.chain(*tokens[(-1 - history_prev_sents): -1]))
+			curr_tokens = tokens[-1]
+			unencoded_labels = labels[-1]
+
+			if history_prev_sents == 0:
+				curr_ex_tokens = curr_tokens
+			else:
+				curr_ex_tokens = (history_tokens, curr_tokens)
+
+			curr_ex_label = int(any(_curr_lbl != fallback_label for _curr_lbl in unencoded_labels))
+
+			examples_input.append(curr_ex_tokens)
+			examples_labels.append(curr_ex_label)
+			examples_input_words.append(curr_row["sentence_words"])
+
+	ret_dict = {
+		"input": examples_input,
+		"output": examples_labels,
+		"input_words": examples_input_words
+	}
+	return ret_dict
+
+
 def create_examples(df: pd.DataFrame, encoding_scheme: Dict[str, int],
 					history_prev_sents: int = 1,
 					fallback_label: Optional[str] = "O",
@@ -486,8 +597,9 @@ def create_examples(df: pd.DataFrame, encoding_scheme: Dict[str, int],
 
 
 if __name__ == "__main__":
+	from transformers import AutoTokenizer
 	tokenizer = AutoTokenizer.from_pretrained("EMBEDDIA/sloberta")
-	dev_df = load_df("data.tsv")
+	dev_df = load_df("/home/matej/Documents/metaphor-detection/data/komet/data.tsv")
 	# Extract top-level frame
 	dev_df["met_frame"] = [
 		[_frame if _frame == "O" else _frame.split("/")[0] for _frame in curr_frames]
@@ -500,3 +612,4 @@ if __name__ == "__main__":
 		history_prev_sents=1, tokenizer_or_tokenizer_name=tokenizer,
 		frame_encoding=frame_encoding
 	)
+

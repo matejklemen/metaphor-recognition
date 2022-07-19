@@ -8,7 +8,7 @@ import wandb
 from torch import optim
 from torch.utils.data import Subset, DataLoader
 from tqdm import tqdm
-from transformers import AutoTokenizer, AutoModelForTokenClassification
+from transformers import AutoTokenizer, AutoModelForTokenClassification, AutoModelForSequenceClassification
 
 from data import TAG2ID, ID2TAG, extract_scheme_info, LOSS_IGNORE_INDEX, TransformersTokenDataset
 from utils import token_precision, token_recall, token_f1, token_average_precision
@@ -341,3 +341,123 @@ class MetaphorController:
 
 		dev_probas = torch.cat(dev_probas)
 		return {"pred_probas": dev_probas, "loss": dev_loss, "num_batches": nb}
+
+
+class MetaphorSentenceController(MetaphorController):
+	def __init__(self, model_dir, label_scheme,
+				 tokenizer_or_tokenizer_name="EMBEDDIA/sloberta", model_or_model_name="EMBEDDIA/sloberta",
+				 learning_rate=2e-5, batch_size=32, validate_every_n_examples=3000, optimized_metric="f1_macro",
+				 device="cuda"):
+		super().__init__(model_dir, label_scheme, tokenizer_or_tokenizer_name, model_or_model_name,
+						 learning_rate, batch_size, validate_every_n_examples, optimized_metric, device)
+		assert self.num_train_labels == 2, "Assuming binary task at sentence-level"
+
+		if isinstance(model_or_model_name, str):
+			self.model = AutoModelForSequenceClassification.from_pretrained(model_or_model_name,
+																			num_labels=self.num_train_labels)
+			self.model = self.model.to(self.device)
+			self.optimizer = optim.AdamW(params=self.model.parameters(), lr=self.learning_rate)
+
+	def run_training(self, train_dataset, dev_dataset=None, num_epochs=1):
+		ts = time()
+		num_train, num_dev = len(train_dataset), 0
+		dev_gt = {}
+		if dev_dataset is not None:
+			dev_gt = {"sentence_labels": dev_dataset.labels}
+			num_dev = len(dev_dataset)
+
+		# Save initial version to prevent crash in case a non-trivial model can not be trained
+		self.save()
+
+		best_dev_metric, best_dev_metric_verbose = 0.0, None
+		max_subset_size = self.validate_every_n_examples
+		num_train_subsets = (num_train + max_subset_size - 1) // max_subset_size
+		for idx_epoch in range(num_epochs):
+			logging.info(f"Epoch #{1 + idx_epoch}/{num_epochs}")
+			train_loss, nb = 0.0, 0
+
+			rand_indices = torch.randperm(num_train)
+			for idx_sub in range(num_train_subsets):
+				logging.info(f"Subset #{1 + idx_sub}/{num_train_subsets}")
+				s_sub, e_sub = idx_sub * max_subset_size, (idx_sub + 1) * max_subset_size
+				curr_sub = Subset(train_dataset, rand_indices[s_sub: e_sub])
+
+				train_res = self.train_pass(curr_sub)
+				train_loss += train_res["loss"]
+				nb += train_res["num_batches"]
+
+				logging.info(f"[Train] loss: {train_loss / max(1, nb):.4f}")
+
+				# Skip evaluation on dev set if no dev set is provided or if training on small leftover training subset
+				if num_dev == 0 or len(curr_sub) < max_subset_size // 2:
+					# If no validation set is provided, new model is always saved
+					if num_dev == 0:
+						self.save()
+
+					continue
+
+				dev_res = self.eval_pass(dev_dataset, batch_size=(2 * self.batch_size))
+				dev_probas = dev_res["pred_probas"].cpu()
+				dev_preds = torch.argmax(dev_probas, dim=-1)
+
+				curr_dev_metrics = self.compute_metrics(dev_dataset,
+														true_labels=dev_gt["sentence_labels"],
+														pred_labels=dev_preds,
+														pred_probas=dev_probas)
+				curr_dev_metrics["loss"] = dev_res['loss'] / max(1, dev_res['num_batches'])
+				logging.info(f"Dev loss: {curr_dev_metrics['loss']:.4f}")
+
+				curr_dev_metrics_verbose = []
+				for metric_name, metric_val in sorted(curr_dev_metrics.items(), key=lambda tup: tup[0]):
+					curr_dev_metrics_verbose.append(f"{metric_name} = {metric_val:.4f}")
+				curr_dev_metrics_verbose = "[Dev metrics] {}".format(", ".join(curr_dev_metrics_verbose))
+				logging.info(curr_dev_metrics_verbose)
+				wandb.log(curr_dev_metrics)
+
+				curr_dev_metric = curr_dev_metrics[self.optimized_metric]
+				if curr_dev_metric > best_dev_metric:
+					logging.info(f"NEW BEST dev metric!")
+					best_dev_metric = curr_dev_metric
+					best_dev_metric_verbose = curr_dev_metrics_verbose
+					self.save()
+
+		logging.info(f"Training finished. Took {time() - ts:.4f}s")
+		logging.info(f"Best validation metric: {best_dev_metric:.4f}")
+		logging.info(best_dev_metric_verbose)
+		wandb.summary[f"best_dev_{self.optimized_metric}"] = best_dev_metric
+
+		# Reload best saved model
+		self.model = AutoModelForSequenceClassification.from_pretrained(self.model_dir).to(self.device)
+
+	def compute_metrics(self,
+						eval_dataset: TransformersTokenDataset,
+						true_labels: torch.Tensor,
+						pred_labels: torch.Tensor,
+						**kwargs):
+		pred_probas = kwargs.get("pred_probas", None)
+
+		metrics = {}
+		pos_labels = list(range(1, 1 + self.num_eval_labels))  # all but the fallback label (eval on pos labels)
+		macro_p, macro_r, macro_f1 = 0.0, 0.0, 0.0
+		for curr_label in pos_labels:
+			curr_label_str = ID2TAG[self.sec_label_scheme][curr_label]
+			metrics[f"p_{curr_label_str}"] = token_precision(true_labels, pred_labels, pos_label=curr_label)
+			metrics[f"r_{curr_label_str}"] = token_recall(true_labels, pred_labels, pos_label=curr_label)
+			metrics[f"f1_{curr_label_str}"] = token_f1(true_labels, pred_labels, pos_label=curr_label)
+
+			if pred_probas is not None:
+				curr_label_probas = pred_probas[:, curr_label]
+				# Convert true labels to binary labels: curr_label vs not(curr_label)
+				true_bin = true_labels.clone()
+				mask_other_labels = torch.logical_and(true_bin != -100, true_bin != curr_label)
+				true_bin[mask_other_labels] = 0
+				metrics[f"ap_{curr_label_str}"] = token_average_precision(true_bin, curr_label_probas)
+
+			macro_p += metrics[f"p_{curr_label_str}"]
+			macro_r += metrics[f"r_{curr_label_str}"]
+			macro_f1 += metrics[f"f1_{curr_label_str}"]
+
+		metrics[f"p_macro"] = macro_p / max(1, len(pos_labels))
+		metrics[f"r_macro"] = macro_r / max(1, len(pos_labels))
+		metrics[f"f1_macro"] = macro_f1 / max(1, len(pos_labels))
+		return metrics
