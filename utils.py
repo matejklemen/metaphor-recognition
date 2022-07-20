@@ -74,6 +74,32 @@ VIS_BOILERPLATE = \
 		.annotation {{
 			font-size: 10px;
 		}}
+		
+		.square {{
+			height: 16px;
+			width: 16px;
+			background-color: rgba(200, 200, 200, 1);
+			margin-bottom: -3px;
+			display: inline-block;
+			border: 1px solid black;
+			border-radius: 3px;
+		}}
+
+		.example {{
+			word-break: break-word;
+			padding-top: 10px;
+			padding-left: 5%;
+			padding-right: 5%;
+			padding-bottom: 10px;
+		}}
+
+		.example-text {{
+			padding: 5px;
+		}}
+
+		.example-label {{
+			font-size: 18px;
+		}}
 	</style>
 </head>
 <body>
@@ -130,6 +156,41 @@ def visualize_token_predictions(tokens, token_predicted, token_true=None, uninte
 	return VIS_BOILERPLATE.format(formatted_examples=formatted_examples)
 
 
+def visualize_sentence_predictions(sentences, labels_predicted, labels_true=None, uninteresting_labels=None):
+	assert isinstance(sentences, list) and isinstance(sentences[0], str)
+	eff_true = labels_true
+	if labels_true is None:
+		eff_true = [None for _ in range(len(labels_predicted))]
+	assert len(labels_predicted) == len(eff_true) == len(sentences)
+	eff_uninteresting = set(uninteresting_labels) if uninteresting_labels is not None else {"O", "not_metaphor"}
+
+	formatted_examples = []
+	for curr_sent, curr_pred, curr_true in zip(sentences, labels_predicted, eff_true):
+		formatted_examples.append("<div class='example'>")
+
+		border_color, bg_color = "#5c5b5b", "#e3e3e3"  # gray
+		optional_tooltip = ""
+		# Visualize correctness only for "interesting" labels, e.g., positive labels in metaphor detection
+		if curr_true is not None and (curr_pred not in eff_uninteresting or curr_true not in eff_uninteresting):
+			if curr_pred == curr_true:
+				border_color, bg_color = "#32a852", "#baffcd"  # green
+			else:
+				optional_tooltip = f" title='Correct: {curr_true}'"
+				border_color, bg_color = "#700900", "#ff9d94"  # red
+
+		formatted_examples.append("<div class='example-label'>")
+		formatted_examples.append(f"<div class='square' style='border: 2px solid {border_color}; background-color: {bg_color};'{optional_tooltip}></div>")
+		formatted_examples.append(f"<strong>{curr_true}</strong>")
+		formatted_examples.append("</div>")
+
+		formatted_examples.append(f"<div class='example-text'>{curr_sent}</div>")
+
+		formatted_examples.append("</div>")
+
+	formatted_examples = "\n".join(formatted_examples)
+	return VIS_BOILERPLATE.format(formatted_examples=formatted_examples)
+
+
 if __name__ == "__main__":
 	t = torch.tensor([
 		[-100, 1, 1, 1, 2, 2, 0, -100],
@@ -148,9 +209,20 @@ if __name__ == "__main__":
 	p_pos = torch.tensor([[0.5, 0.1, 0.4, 0.35, 0.8, 0.2]])
 	print(token_average_precision(true_labels=t_bin, pos_probas=p_pos))  # 0.833.. (sklearn example)
 
-	tokens = ['Moderen', ',', 'čist', 'in', 'preprost', '.']
+	_tokens = ['Moderen', ',', 'čist', 'in', 'preprost', '.']
+	_sents = [
+		" ".join(['Moderen', ',', 'čist', 'in', 'preprost', '.']),
+		" ".join(['Moderen', ',', 'čist', 'in', 'preprost', '.']),
+		" ".join(['Moderen', ',', 'čist', 'in', 'preprost', '.'])
+	]
 	preds = ['O', 'O', 'MRWi', 'O', 'O', 'O']
 	correct = ['O', 'O', 'MRWd', 'O', 'O', 'O']
 	with open("tmp.html", "w", encoding="utf-8") as f:
-		vis_html = visualize_token_predictions([tokens], [preds], [correct])
+		vis_html = visualize_token_predictions([_tokens], [preds], [correct])
+		print(vis_html, file=f)
+
+	with open("tmp_sent.html", "w", encoding="utf-8") as f:
+		vis_html = visualize_sentence_predictions(_sents,
+												  ["metaphor", "not_metaphor", "not_metaphor"],
+												  ["metaphor", "metaphor", "not_metaphor"])
 		print(vis_html, file=f)
