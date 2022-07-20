@@ -358,6 +358,32 @@ class MetaphorSentenceController(MetaphorController):
 			self.model = self.model.to(self.device)
 			self.optimizer = optim.AdamW(params=self.model.parameters(), lr=self.learning_rate)
 
+	@staticmethod
+	def load(controller_dir, **override_kwargs):
+		with open(os.path.join(controller_dir, "controller_config.json"), "r", encoding="utf-8") as f_config:
+			config = json.load(fp=f_config)
+
+		config["model_dir"] = controller_dir
+		# When training, these likely point to a HF checkpoint, but they get saved locally
+		config["model_or_model_name"] = controller_dir
+		config["tokenizer_or_tokenizer_name"] = controller_dir
+
+		# User may override pre-trained config parameters, such as batch size or device
+		for config_key, new_value in override_kwargs.items():
+			old_value = ""
+			if config_key in config:
+				old_value = f" {config_key} = {config[config_key]} -> "
+			logging.info(f"Overriding config:{old_value}{config_key} = {new_value}")
+			config[config_key] = new_value
+
+		controller = MetaphorSentenceController(**config)
+		path_to_optimizer = os.path.join(controller_dir, "optimizer_state.th")
+		if os.path.exists(path_to_optimizer):
+			logging.info(f"Found existing optimizer state for model being loaded ({path_to_optimizer})!")
+			controller.optimizer.load_state_dict(torch.load(path_to_optimizer))
+
+		return controller
+
 	def run_training(self, train_dataset, dev_dataset=None, num_epochs=1):
 		ts = time()
 		num_train, num_dev = len(train_dataset), 0
