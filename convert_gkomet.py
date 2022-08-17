@@ -43,7 +43,7 @@ def resolve(element, expand_phrase: bool = False, only_noun_or_verb: bool = Fals
 				return element.text, metaphor_type, "/".join(frame_buffer), pos_tag
 		# Annotated word or word group
 		elif element.tag.endswith("seg"):
-			mtype, new_frame_buffer = metaphor_type, frame_buffer
+			mtype, new_frame_buffer = metaphor_type, list(frame_buffer)
 			if element.attrib["type"] == "frame":
 				new_frame_buffer += [element.attrib["subtype"]]
 			else:

@@ -38,7 +38,7 @@ def resolve(element, expand_phrase: bool = False, only_noun_or_verb: bool = Fals
 				return element.text, metaphor_type, "/".join(frame_buffer), pos_tag
 		# Annotated word or word group
 		elif element.tag.endswith("seg"):
-			mtype, new_frame_buffer = "O", frame_buffer
+			mtype, new_frame_buffer = "O", list(frame_buffer)
 			if element.attrib["subtype"] != "frame":
 				if element.attrib["subtype"] not in {"MRWd", "MRWi", "WIDLI", "MFlag"}:
 					logging.warning(f"Not covered: {element.attrib['subtype']}")
