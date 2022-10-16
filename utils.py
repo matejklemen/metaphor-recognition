@@ -145,7 +145,7 @@ def visualize_token_predictions(tokens, token_predicted, token_true=None, uninte
 					border_color, bg_color = "#700900", "#ff9d94"  # red
 
 			formatted_examples.append(f"<div class='token' style='border: 2px solid {border_color}; background-color: {bg_color};'{optional_tooltip}>")
-			formatted_examples.append(f"<div style='text-align: center;' class='annotation'>{pred_lbl}</div>")
+			formatted_examples.append(f"<div style='text-align: center;' class='annotation'>(y&#770;={pred_lbl})</div>")
 			formatted_examples.append(f"<div style='text-align: center;'>{token}</div>")
 			formatted_examples.append("</div>")
 		formatted_examples.append("</div>")
