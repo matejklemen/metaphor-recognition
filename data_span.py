@@ -277,9 +277,7 @@ class TransformersTokenDataset(Dataset):
         postproc_preds: List[List[int]] = []
         # Only keep predictions for the input sentence (i.e. drop for history)
         for idx_inst, preds in enumerate(converted_preds):
-            print(f"Before:\n{preds}")
             input_preds = [preds[_i] for _i in idx2inst[idx_inst].input_indices]
-            print(f"After:\n{input_preds}")
             postproc_preds.append(input_preds)
 
         if pad:
