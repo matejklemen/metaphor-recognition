@@ -2,6 +2,7 @@ import unittest
 from typing import List
 
 import pandas as pd
+import torch
 from transformers import AutoTokenizer
 
 from data_span import Instance, EncodedInstance, create_examples, TransformersTokenDataset
@@ -157,3 +158,29 @@ class TestDataSpan(unittest.TestCase):
 		self.assertListEqual(dataset.enc_instances[4].met_type,
 							 [{"type": 0, "word_indices_input": [8], "word_indices_instance": [8],
 							   "subword_indices": [8]}])
+
+	def test_word_predictions(self):
+		# "longest", "example" are misspelled to test handling of broken up sentences
+		# NOTE: this example depends on the tokenizer == roberta-base
+		input_sent = ["the", "longhest", "of", "all", "the", "sentences", "in", "this", "exzample"]
+		prev_sents = [["short", "sentence"]]
+
+		instance = Instance(input_sent, history_sents=prev_sents)
+		encoded_instances: List[EncodedInstance] = EncodedInstance.from_instance(instance, self.tokenizer,
+																				 type_encoding=self.type_encoding,
+																				 max_length=8, stride=2)
+		dataset = TransformersTokenDataset(encoded_instances)
+
+		subw_preds = torch.tensor([
+			# ['<s>', ' short', ' sentence', ' the', ' long', 'hest', ' of', '</s>']
+			# Prediction for 'sentence' should be ignored because the sentence is part of the history
+			# Prediction for 'longhest' should be 1 (prediction of first subword), not 2
+			[0, 0, 1, 0, 1, 2, 0, 0],
+			# ['<s>', 'hest', ' of', ' all', ' the', ' sentences', ' in', '</s>']
+			# Prediction of subword 'hest' should be ignored because it is an overlapping part already taken into account
+			[0, 3, 0, 0, 0, 1, 0, 0],
+			# ['<s>', ' sentences', ' in', ' this', ' ex', 'z', 'ample', '</s>']
+			[0, 2, 0, 0, 0, 1, 2, 0]
+		])
+		word_preds = dataset.word_predictions(subw_preds)
+		self.assertListEqual(word_preds, [[0, 1, 0, 0, 0, 1, 0, 0, 0]])

@@ -133,8 +133,8 @@ class EncodedInstance:
             end_w_id = None
             for idx_subw, w_id in enumerate(word_ids[(nonspecial_start + ignore_n_overlapping):],
                                             start=(nonspecial_start + ignore_n_overlapping)):
-                subword2word[idx_subw] = w_id
                 if w_id is not None:
+                    subword2word[idx_subw] = w_id
                     existing_subw = word2subword.get(w_id, [])
                     existing_subw.append(idx_subw)
                     word2subword[w_id] = existing_subw
@@ -247,42 +247,47 @@ class TransformersTokenDataset(Dataset):
 
         return TransformersTokenDataset(encoded_instances)
 
-    def align_word_predictions(self, preds, pad=False) -> List[List[int]]:
+    def word_predictions(self, preds: torch.Tensor, pad: Optional[bool] = False) -> List[List[int]]:
         """ Converts potentially broken up and partially repeating (overlapping) predictions to word-level predictions."""
-        # TODO: verify that this works (it likely does not) and refactor it!
-        raise NotImplementedError("TODO: REFACTOR")
-        converted_preds: List[List[Optional[int]]] = [
-            [None for _ in range(self.num_words_in_sample[idx_sample])]
-            for idx_sample in range(self.num_unique_samples)
-        ]
+        assert preds.shape[0] == len(self.enc_instances), "Predictions need to be provided for each encoded instance " \
+                                                          f"({preds.shape[0]} predictions != {len(self.enc_instances)} encoded instances)"
+        converted_preds: List[List[Optional[int]]] = []
+        inst2idx: Dict[Instance, int] = {}  # instance (obj) -> position of instance (in `converted_preds`)
+        for idx_enc, enc_instance in enumerate(self.enc_instances):
+            if enc_instance.instance not in inst2idx:
+                inst2idx[enc_instance.instance] = len(converted_preds)
+                converted_preds.append(
+                    [None for _ in range(len(enc_instance.instance.words))]  # TODO: take only input_indices afterwards
+                )
 
-        subsample_to_sample = getattr(self, "subsample_to_sample")
-        subword_to_word = getattr(self, "subword_to_word")
-        for idx_subsample in range(preds.shape[0]):
-            idx_sample = subsample_to_sample[idx_subsample]
-            word_indices = subword_to_word[idx_subsample]
-            curr_preds = preds[idx_subsample]
-
-            assert len(word_indices) == len(curr_preds)
-            for i, w_id in enumerate(word_indices):
-                if w_id is None:
+            idx_inst = inst2idx[enc_instance.instance]
+            for idx_subw, pred in enumerate(preds[idx_enc]):
+                # `idx_word` will be None for special and overlapping tokens
+                idx_word = enc_instance.subword2word.get(idx_subw, None)
+                if idx_word is None:
                     continue
 
                 # Prediction of first subword is assigned to be the prediction of word
-                if converted_preds[idx_sample][w_id] is None:
-                    converted_preds[idx_sample][w_id] = curr_preds[i].item()
+                # TODO: aggregate all predictions and select most frequent one?
+                if converted_preds[idx_inst][idx_word] is None:
+                    converted_preds[idx_inst][idx_word] = int(pred)
 
-        converted_preds = [
-            list(filter(lambda _w_id: _w_id is not None, _curr_preds))
-            for _curr_preds in converted_preds
-        ]
+        idx2inst: Dict[int, Instance] = {_i: _inst for _inst, _i in inst2idx.items()}
+
+        postproc_preds: List[List[int]] = []
+        # Only keep predictions for the input sentence (i.e. drop for history)
+        for idx_inst, preds in enumerate(converted_preds):
+            print(f"Before:\n{preds}")
+            input_preds = [preds[_i] for _i in idx2inst[idx_inst].input_indices]
+            print(f"After:\n{input_preds}")
+            postproc_preds.append(input_preds)
 
         if pad:
-            max_words = max(map(lambda word_preds: len(word_preds), converted_preds))
-            converted_preds = [_curr_preds + [LOSS_IGNORE_INDEX] * (max_words - len(_curr_preds))
-                               for _curr_preds in converted_preds]
+            max_words = max(map(lambda word_preds: len(word_preds), postproc_preds))
+            postproc_preds = [_curr_preds + [LOSS_IGNORE_INDEX] * (max_words - len(_curr_preds))
+                               for _curr_preds in postproc_preds]
 
-        return converted_preds
+        return postproc_preds
 
 
 def create_examples(df: pd.DataFrame, history_prev_sents: int = 0) -> List[Instance]:
