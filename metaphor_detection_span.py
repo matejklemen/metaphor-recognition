@@ -6,6 +6,7 @@ import sys
 from typing import List, Dict
 
 import numpy as np
+import pandas as pd
 import torch
 import torch.nn as nn
 import torch.optim as optim
@@ -13,7 +14,7 @@ from tqdm import trange
 from transformers import AutoTokenizer, AutoModelForTokenClassification
 
 from data_span import TransformersTokenDataset, load_df
-from utils import token_f1
+from utils import token_f1, token_precision, token_recall, visualize_token_predictions
 
 
 def extract_pred_data(pred_probas: torch.Tensor,
@@ -47,6 +48,13 @@ parser.add_argument("--train_path", type=str,
 parser.add_argument("--dev_path", type=str,
                     default="/home/matej/Documents/metaphor-detection/data/komet_hf_format/dev_komet_hf_format.tsv")
 parser.add_argument("--history_prev_sents", type=int, default=0)
+parser.add_argument("--type_scheme", type=str, default="binary", choices=["binary"])
+parser.add_argument("--mrwi", action="store_true")
+parser.add_argument("--mrwd", action="store_true")
+parser.add_argument("--mflag", action="store_true")
+parser.add_argument("--widli", action="store_true")
+parser.add_argument("--mrwimp", action="store_true")
+parser.add_argument("--bridge", action="store_true")
 
 parser.add_argument("--pretrained_name_or_path", type=str, default="EMBEDDIA/sloberta")
 parser.add_argument("--batch_size", type=int, default=16)
@@ -96,9 +104,30 @@ if __name__ == "__main__":
     DEVICE = torch.device("cpu") if args.use_cpu else torch.device("cuda")
     DEV_BATCH_SIZE = args.batch_size * 2
 
-    # TODO: wire me with argparse
-    MET_TYPE_MAPPING = {"MRWi": "metaphor", "MRWd": "metaphor"}  # everything else maps to "O"
-    type_encoding = {"O": 0, "metaphor": 1}
+    valid_types = []
+    if args.mrwi:
+        valid_types.append("MRWi")
+    if args.mrwd:
+        valid_types.append("MRWd")
+    if args.mflag:
+        valid_types.append("MFlag")
+    if args.widli:
+        valid_types.append("WIDLI")
+    if args.mrwimp:
+        valid_types.append("MRWimp")
+    if args.bridge:
+        valid_types.append("bridge")
+    if len(valid_types) == 0:
+        raise ValueError("No valid types were specified, please set one of --mrwi, --mrwd, --mflag, --widli, "
+                         "--mrwimp, or --bridge")
+
+    if args.type_scheme == "binary":
+        MET_TYPE_MAPPING = {_type: "metaphor" for _type in valid_types}  # everything else maps to "O"
+        type_encoding = {"O": 0, "metaphor": 1}
+    else:
+        raise NotImplementedError(args.type_scheme)
+
+    rev_type_encoding = {_idx: _type for _type, _idx in type_encoding.items()}
     num_types = len(type_encoding)
     frame_encoding = None  # TODO: implement me
 
@@ -226,6 +255,7 @@ if __name__ == "__main__":
                     _dev_preds = torch.argmax(probas, dim=-1).cpu()
                     dev_preds_dense.append(_dev_preds)
 
+                    # TODO: this could be precomputed once
                     _dev_true = torch.zeros_like(_dev_preds)  # zeros_like because 0 == fallback index
                     for idx_ex in range(_dev_true.shape[0]):
                         for met_info in expected_types[idx_ex]:
@@ -238,7 +268,7 @@ if __name__ == "__main__":
             dev_true_dense = torch.cat(dev_true_dense)
             dev_true_word = dev_set.word_predictions(dev_true_dense, pad=True)
 
-            dev_metric = validation_fn(y_true=dev_true_dense.numpy(), y_pred=dev_preds_dense.numpy())
+            dev_metric = validation_fn(y_true=np.array(dev_true_word), y_pred=np.array(dev_preds_word))
             logging.info(f"\tValidation {args.validation_metric}: {dev_metric:.4f}")
 
             if dev_metric > best_dev_metric:
@@ -262,7 +292,73 @@ if __name__ == "__main__":
     logging.info("Reloading best model for evaluation...")
     model = AutoModelForTokenClassification.from_pretrained(args.experiment_dir).to(DEVICE)
 
+    # Obtain predictions on validation set with the best model, save them, visualize them
+    # 2. Validation step
+    with torch.inference_mode():
+        model.eval()
 
+        num_dev_batches = (len(dev_set) + DEV_BATCH_SIZE - 1) // DEV_BATCH_SIZE
+        dev_indices = torch.arange(len(dev_set))
+        dev_preds_dense, dev_true_dense = [], []
+
+        for idx_batch in trange(num_dev_batches):
+            s_b, e_b = idx_batch * DEV_BATCH_SIZE, (idx_batch + 1) * DEV_BATCH_SIZE
+            batch_indices = dev_indices[s_b: e_b]
+            curr_batch = dev_set[batch_indices]
+
+            indices = curr_batch["indices"]
+            curr_batch_device = {_k: _v.to(DEVICE) for _k, _v in curr_batch.items()
+                                 if _k not in {"indices", "special_tokens_mask"}}
+            ground_truth = dev_set.targets(indices)
+            expected_types = ground_truth["met_type"]
+
+            probas = torch.softmax(model(**curr_batch_device)["logits"], dim=-1)
+
+            # Dev set: group predictions at word-level to ensure comparability across different models
+            _dev_preds = torch.argmax(probas, dim=-1).cpu()
+            dev_preds_dense.append(_dev_preds)
+
+            # TODO: this could be precomputed once
+            _dev_true = torch.zeros_like(_dev_preds)  # zeros_like because 0 == fallback index
+            for idx_ex in range(_dev_true.shape[0]):
+                for met_info in expected_types[idx_ex]:
+                    _dev_true[idx_ex, met_info["subword_indices"]] = met_info["type"]
+            dev_true_dense.append(_dev_true)
+
+    dev_preds_dense = torch.cat(dev_preds_dense)
+    dev_preds_word_padded = dev_set.word_predictions(dev_preds_dense, pad=True)
+    dev_preds_word_unpadded = list(
+        map(lambda instance_types: list(map(lambda _idx_type: rev_type_encoding[_idx_type], instance_types)),
+            dev_set.word_predictions(dev_preds_dense, pad=False))
+    )
+
+    dev_true_dense = torch.cat(dev_true_dense)
+    dev_true_word_padded = dev_set.word_predictions(dev_true_dense, pad=True)
+    dev_true_word_unpadded = list(
+        map(lambda instance_types: list(map(lambda _idx_type: rev_type_encoding[_idx_type], instance_types)),
+            dev_set.word_predictions(dev_true_dense, pad=False))
+    )
+
+    final_dev_p = token_precision(true_labels=np.array(dev_true_word_padded),
+                                  pred_labels=np.array(dev_preds_word_padded))
+    final_dev_r = token_recall(true_labels=np.array(dev_true_word_padded),
+                               pred_labels=np.array(dev_preds_word_padded))
+    final_dev_f1 = token_f1(true_labels=np.array(dev_true_word_padded),
+                            pred_labels=np.array(dev_preds_word_padded))
+    print(f"Dev metrics using best model:"
+          f"P = {final_dev_p:.4f}, R = {final_dev_r:.4f}, F1 = {final_dev_f1:.4f}")
+
+    with open(os.path.join(args.experiment_dir, "pred_visualization.html"), "w", encoding="utf-8") as f:
+        dev_words = dev_set.input_sentences
+        visualization_html = visualize_token_predictions(dev_words, dev_preds_word_unpadded, dev_true_word_unpadded)
+        print(visualization_html, file=f)
+
+    df_dev["preds_transformed"] = dev_preds_word_unpadded
+    df_dev["true_transformed"] = dev_true_word_unpadded
+    df_dev.to_csv(os.path.join(args.experiment_dir, "dev_results.tsv"), index=False, sep="\t")
+
+    # TODO: Obtain predictions on test set with the best model, save them, visualize them
+    # ...
 
 
 
