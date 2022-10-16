@@ -77,11 +77,6 @@ if __name__ == "__main__":
     if not os.path.exists(args.experiment_dir):
         os.makedirs(args.experiment_dir)
 
-    for k, v in vars(args).items():
-        v_str = str(v)
-        v_str = f"...{v_str[-(50 - 3):]}" if len(v_str) > 50 else v_str
-        logging.info(f"|{k:30s}|{v_str:50s}|")
-
     with open(os.path.join(args.experiment_dir, "experiment_config.json"), "w") as f:
         json.dump(vars(args), fp=f, indent=4)
 
@@ -92,6 +87,11 @@ if __name__ == "__main__":
                          logging.FileHandler(os.path.join(args.experiment_dir, "experiment.log"))]:
         curr_handler.setFormatter(logging.Formatter("%(asctime)s [%(levelname)-5.5s]  %(message)s"))
         logger.addHandler(curr_handler)
+
+    for k, v in vars(args).items():
+        v_str = str(v)
+        v_str = f"...{v_str[-(50 - 3):]}" if len(v_str) > 50 else v_str
+        logging.info(f"|{k:30s}|{v_str:50s}|")
 
     DEVICE = torch.device("cpu") if args.use_cpu else torch.device("cuda")
     DEV_BATCH_SIZE = args.batch_size * 2
