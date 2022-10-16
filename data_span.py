@@ -209,6 +209,17 @@ class TransformersTokenDataset(Dataset):
             self.target_data[target_name] = list(map(lambda _enc_inst: getattr(_enc_inst, target_name),
                                                      encoded_instances))
 
+    @property
+    def input_sentences(self):
+        seen_instances = set()
+        sents: List[List[str]] = []
+        for enc in self.enc_instances:
+            if enc.instance not in seen_instances:
+                sents.append([enc.instance.words[_i] for _i in enc.instance.input_indices])
+            seen_instances.add(enc.instance)
+
+        return sents
+
     def __getitem__(self, item):
         ret_dict = {k: self.model_data[k][item] for k in self.model_keys}
         ret_dict["indices"] = item
