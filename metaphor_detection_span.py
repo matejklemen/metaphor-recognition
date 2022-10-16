@@ -9,11 +9,11 @@ import numpy as np
 import torch
 import torch.nn as nn
 import torch.optim as optim
-from sklearn.metrics import f1_score
 from tqdm import trange
 from transformers import AutoTokenizer, AutoModelForTokenClassification
 
 from data_span import TransformersTokenDataset, load_df
+from utils import token_f1
 
 
 def extract_pred_data(pred_probas: torch.Tensor,
@@ -149,7 +149,7 @@ if __name__ == "__main__":
     loss_fn = nn.NLLLoss()
     validation_fn = lambda y_true, y_pred: 0.0  # placeholder
     if args.validation_metric == "f1_score_binary":
-        validation_fn = lambda y_true, y_pred: f1_score(y_true=y_true, y_pred=y_pred, average="binary", pos_label=1)
+        validation_fn = lambda y_true, y_pred: token_f1(true_labels=y_true, pred_labels=y_pred, pos_label=1)
     else:
         raise NotImplementedError(args.validation_metric)
 
@@ -203,12 +203,16 @@ if __name__ == "__main__":
             with torch.inference_mode():
                 model.eval()
 
-                dev_preds, dev_true = [], []
                 num_dev_batches = (len(dev_set) + DEV_BATCH_SIZE - 1) // DEV_BATCH_SIZE
                 dev_indices = torch.arange(len(dev_set))
+
+                dev_preds_dense = []
+                dev_true_dense = []
+
                 for idx_batch in trange(num_dev_batches):
                     s_b, e_b = idx_batch * DEV_BATCH_SIZE, (idx_batch + 1) * DEV_BATCH_SIZE
-                    curr_batch = dev_set[dev_indices[s_b: e_b]]
+                    batch_indices = dev_indices[s_b: e_b]
+                    curr_batch = dev_set[batch_indices]
 
                     indices = curr_batch["indices"]
                     curr_batch_device = {_k: _v.to(DEVICE) for _k, _v in curr_batch.items()
@@ -217,17 +221,24 @@ if __name__ == "__main__":
                     expected_types = ground_truth["met_type"]
 
                     probas = torch.softmax(model(**curr_batch_device)["logits"], dim=-1)
-                    pred_logproba, correct_class = extract_pred_data(probas, expected_types,
-                                                                     curr_batch["special_tokens_mask"].to(DEVICE))
-                    pred_logproba = pred_logproba.cpu()
-                    correct_class = correct_class.cpu()
-                    dev_preds.append(torch.argmax(pred_logproba, dim=-1))
-                    dev_true.append(correct_class)
 
-            dev_preds = torch.cat(dev_preds).numpy()
-            dev_true = torch.cat(dev_true).numpy()
+                    # Dev set: group predictions at word-level to ensure comparability across different models
+                    _dev_preds = torch.argmax(probas, dim=-1).cpu()
+                    dev_preds_dense.append(_dev_preds)
 
-            dev_metric = validation_fn(y_true=dev_true, y_pred=dev_preds)
+                    _dev_true = torch.zeros_like(_dev_preds)  # zeros_like because 0 == fallback index
+                    for idx_ex in range(_dev_true.shape[0]):
+                        for met_info in expected_types[idx_ex]:
+                            _dev_true[idx_ex, met_info["subword_indices"]] = met_info["type"]
+                    dev_true_dense.append(_dev_true)
+
+            dev_preds_dense = torch.cat(dev_preds_dense)
+            dev_preds_word = dev_set.word_predictions(dev_preds_dense, pad=True)
+
+            dev_true_dense = torch.cat(dev_true_dense)
+            dev_true_word = dev_set.word_predictions(dev_true_dense, pad=True)
+
+            dev_metric = validation_fn(y_true=dev_true_dense.numpy(), y_pred=dev_preds_dense.numpy())
             logging.info(f"\tValidation {args.validation_metric}: {dev_metric:.4f}")
 
             if dev_metric > best_dev_metric:
