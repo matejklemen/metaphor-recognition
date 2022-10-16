@@ -1,0 +1,159 @@
+import unittest
+from typing import List
+
+import pandas as pd
+from transformers import AutoTokenizer
+
+from data_span import Instance, EncodedInstance, create_examples, TransformersTokenDataset
+
+
+class TestDataSpan(unittest.TestCase):
+	def setUp(self):
+		self.sample_df = pd.DataFrame({
+			"document_name": ["dummy0", "dummy0", "dummy1", "dummy2"],
+			"idx": [0, 1, 0, 0],
+			"sentence_words": [
+				["short", "sentence"],
+				["short", "sentence", "with", "metaphors"],
+				["a", "bit", "longer", "of", "a", "sentence"],
+				["the", "longest", "of", "all", "the", "sentences", "in", "this", "example"]
+			],
+			"met_type": [
+				[],
+				[{"type": "MRWi", "word_indices": [3]}],
+				[{"type": "MRWd", "word_indices": [1, 2]}, {"type": "MRWd", "word_indices": [5]}],
+				[{"type": "MRWi", "word_indices": [0, 1]}, {"type": "MRWd", "word_indices": [3, 4, 5]}, {"type": "WIDLI", "word_indices": [7, 8]}]
+			],
+			"met_frame": [
+				[],
+				[],
+				[],
+				[]
+			]
+		})
+		self.type_encoding = {"O": 0, "MRWi": 1, "MRWd": 2}
+		self.tokenizer = AutoTokenizer.from_pretrained("roberta-base", add_prefix_space=True)
+
+	def test_create_instance(self):
+		""" Test the creation of raw instance. """
+		input_sent = ["short", "sentence", "with", "metaphors"]
+		prev_sents = [["short", "sentence"]]
+		met_type = [{"type": "MRWi", "word_indices": [3]}]
+		met_frame = []
+
+		# No history, no types, no frames
+		instance = Instance(input_sent)
+		self.assertEqual(len(instance.words), 4)
+		self.assertEqual(len(instance.input_indices), 4)
+		self.assertEqual(len(instance.sent_indices), 4)
+		self.assertListEqual(instance.sent_indices, [0, 0, 0, 0])
+		self.assertEqual(len(instance.history_indices), 0)
+		self.assertListEqual(instance.met_type, [])
+		self.assertListEqual(instance.met_frame, [])
+
+		# No history, has types
+		instance2 = Instance(input_sent, met_type=met_type)
+		self.assertListEqual(instance2.met_type, [{"type": "MRWi", "word_indices_input": [3], "word_indices_instance": [3]}])
+
+		# History, types and frames
+		instance3 = Instance(input_sent, met_type=met_type, met_frame=met_frame, history_sents=prev_sents)
+		self.assertEqual(len(instance3.words), 6)
+		self.assertEqual(len(instance3.input_indices), 4)
+		self.assertEqual(len(instance3.sent_indices), 6)
+		self.assertListEqual(instance3.sent_indices, [0, 0, 1, 1, 1, 1])
+		self.assertEqual(len(instance3.history_indices), 2)
+		self.assertListEqual(instance3.met_type, [{"type": "MRWi", "word_indices_input": [3], "word_indices_instance": [5]}])
+		self.assertListEqual(instance3.met_frame, [])
+
+	def test_create_encoded_instance(self):
+		""" Test the creation of encoded instance from a raw instance. """
+		# "longest", "example" are misspelled to test handling of broken up sentences
+		# NOTE: this example depends on the tokenizer == roberta-base
+		input_sent = ["the", "longhest", "of", "all", "the", "sentences", "in", "this", "exzample"]
+		prev_sents = [["short", "sentence"]]
+		met_type = [{"type": "MRWi", "word_indices": [0, 1]}, {"type": "MRWd", "word_indices": [3, 4, 5]}, {"type": "WIDLI", "word_indices": [7, 8]}]
+		met_frame = []
+
+		instance = Instance(input_sent, met_type=met_type, met_frame=met_frame, history_sents=prev_sents)
+		encoded_instances: List[EncodedInstance] = EncodedInstance.from_instance(instance, self.tokenizer,
+																				 type_encoding=self.type_encoding,
+																				 max_length=4, stride=1)
+
+		self.assertEqual(len(encoded_instances), 13)
+		self.assertEqual(len(encoded_instances[0].met_type), 0)
+		# encoded_instance[1] in decoded form: ['<s>', ' sentence', ' the', '</s>']
+		self.assertListEqual(encoded_instances[1].met_type,
+							 [{"type": 1, "word_indices_input": [0], "word_indices_instance": [2], "subword_indices": [2]}])
+		# encoded_instance[2] in decoded form:  ['<s>', ' the', ' long', '</s>']
+		self.assertListEqual(encoded_instances[2].met_type,
+							 [{"type": 1, "word_indices_input": [1], "word_indices_instance": [3], "subword_indices": [2]}])
+		self.assertDictEqual(encoded_instances[2].word2subword, {3: [2]})
+
+		# encoded_instance[3] in decoded form: ['<s>', ' long', 'hest', '</s>']
+		self.assertListEqual(encoded_instances[3].met_type,
+							 [{"type": 1, "word_indices_input": [1], "word_indices_instance": [3],
+							   "subword_indices": [2]}])
+		self.assertDictEqual(encoded_instances[3].word2subword, {3: [2]})
+
+		# Make sure WIDLI was encoded as the fallback label ("O" -> 0) as it is not explicitly defined in type_encoding
+		self.assertListEqual(encoded_instances[-1].met_type,
+							 [{"type": 0, "word_indices_input": [8], "word_indices_instance": [10], "subword_indices": [2]}])
+
+	def test_create_examples(self):
+		created_examples = create_examples(self.sample_df, history_prev_sents=0)
+		self.assertEqual(len(created_examples), 4)
+
+		for created_inst in created_examples:
+			self.assertEqual(len(created_inst.history_indices), 0)  # No previous sentences
+			self.assertEqual(len(set(created_inst.sent_indices)), 1)  # All part of the same sentence
+
+		created_examples = create_examples(self.sample_df, history_prev_sents=1)
+		self.assertEqual(len(created_examples), 4)
+		self.assertEqual(len(created_examples[0].history_indices), 0)  # First sentence has no previous sentence
+		self.assertEqual(len(created_examples[1].history_indices), 2)
+
+	def test_create_dataset_from_dataframe(self):
+		# Case #1: no history, no breaking up of examples needed
+		dataset = TransformersTokenDataset.from_dataframe(self.sample_df,
+														  type_encoding=self.type_encoding,
+														  max_length=32, stride=0, history_prev_sents=0,
+														  tokenizer_or_tokenizer_name=self.tokenizer)
+
+		self.assertEqual(len(dataset), 4)
+		for attr_name in dataset.model_keys:
+			self.assertListEqual(list(dataset.model_data[attr_name].shape), [4, 32])  # [num_examples, max_length]
+
+		# Case #2: history and breaking up of examples needed, stride=0
+		dataset = TransformersTokenDataset.from_dataframe(self.sample_df,
+														  type_encoding=self.type_encoding,
+														  max_length=8, stride=0, history_prev_sents=1,
+														  tokenizer_or_tokenizer_name=self.tokenizer)
+		self.assertEqual(len(dataset), 5)
+		for attr_name in dataset.model_keys:
+			self.assertListEqual(list(dataset.model_data[attr_name].shape), [5, 8])  # [num_examples, max_length]
+
+		"""
+			Instance, subwords: ['<s>', ' in', ' this', ' example', '</s>', '<pad>', '<pad>', '<pad>']
+			Input (words): ['the', 'longest', 'of', 'all', 'the', 'sentences', 'in', 'this', 'example']
+			Instance (words): ['the', 'longest', 'of', 'all', 'the', 'sentences', 'in', 'this', 'example']
+		"""
+		self.assertListEqual(dataset.enc_instances[4].met_type,
+							 [{"type": 0, "word_indices_input": [7, 8], "word_indices_instance": [7, 8], "subword_indices": [2, 3]}])
+
+		# Case #3: history and breaking up of examples needed, stride>0
+		dataset = TransformersTokenDataset.from_dataframe(self.sample_df,
+														  type_encoding=self.type_encoding,
+														  max_length=10, stride=7, history_prev_sents=1,
+														  tokenizer_or_tokenizer_name=self.tokenizer)
+
+		self.assertEqual(len(dataset), 5)
+		""" Check that metaphors are only tracked once across overlapping instances: ['all', 'the', 'sentences'] and 
+		['this'] were already tracked in a previous instance.
+		
+		Instance, subwords: ['<s>', ' longest', ' of', ' all', ' the', ' sentences', ' in', ' this', ' example', '</s>']
+		Input (words): ['the', 'longest', 'of', 'all', 'the', 'sentences', 'in', 'this', 'example']
+		Instance (words): ['the', 'longest', 'of', 'all', 'the', 'sentences', 'in', 'this', 'example']
+		"""
+		self.assertListEqual(dataset.enc_instances[4].met_type,
+							 [{"type": 0, "word_indices_input": [8], "word_indices_instance": [8],
+							   "subword_indices": [8]}])
