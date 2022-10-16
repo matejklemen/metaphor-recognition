@@ -31,7 +31,7 @@ def extract_pred_data(pred_probas: torch.Tensor,
             ))
             correct_class.append(met_info["type"])
 
-    pred_logproba = torch.stack(pred_logproba) if len(pred_logproba) > 0 else torch.zeros((0, num_types))
+    pred_logproba = torch.stack(pred_logproba) if len(pred_logproba) > 0 else torch.zeros((0, num_types)).to(DEVICE)
     # Negative examples = all other tokens
     pred_logproba = torch.cat((pred_logproba,
                                torch.log(pred_probas[free_tokens_mask])))
@@ -76,6 +76,11 @@ if __name__ == "__main__":
 
     if not os.path.exists(args.experiment_dir):
         os.makedirs(args.experiment_dir)
+
+    for k, v in vars(args).items():
+        v_str = str(v)
+        v_str = f"...{v_str[-(50 - 3):]}" if len(v_str) > 50 else v_str
+        logging.info(f"|{k:30s}|{v_str:50s}|")
 
     with open(os.path.join(args.experiment_dir, "experiment_config.json"), "w") as f:
         json.dump(vars(args), fp=f, indent=4)
