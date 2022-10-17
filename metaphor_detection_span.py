@@ -6,10 +6,10 @@ import sys
 from typing import List, Dict
 
 import numpy as np
-import pandas as pd
 import torch
 import torch.nn as nn
 import torch.optim as optim
+import wandb
 from tqdm import trange
 from transformers import AutoTokenizer, AutoModelForTokenClassification
 
@@ -67,6 +67,7 @@ parser.add_argument("--early_stopping_rounds", type=int, default=5)
 parser.add_argument("--validation_metric", type=str, default="f1_score_binary",
                     choices=["f1_score_binary"])
 
+parser.add_argument("--wandb_project_name", type=str, default="metaphor-komet-token-span-optimization")
 parser.add_argument("--random_seed", type=int, default=17)
 parser.add_argument("--use_cpu", action="store_true")
 
@@ -130,6 +131,8 @@ if __name__ == "__main__":
     rev_type_encoding = {_idx: _type for _type, _idx in type_encoding.items()}
     num_types = len(type_encoding)
     frame_encoding = None  # TODO: implement me
+
+    wandb.init(project=args.wandb_project_name, config=vars(args))
 
     tokenizer = AutoTokenizer.from_pretrained(args.pretrained_name_or_path)
     model = AutoModelForTokenClassification.from_pretrained(
@@ -270,6 +273,7 @@ if __name__ == "__main__":
 
             dev_metric = validation_fn(y_true=np.array(dev_true_word), y_pred=np.array(dev_preds_word))
             logging.info(f"\tValidation {args.validation_metric}: {dev_metric:.4f}")
+            wandb.log({f"dev_{args.validation_metric}": dev_metric})
 
             if dev_metric > best_dev_metric:
                 logging.info(f"\t\tNew best, saving checkpoint!")
@@ -287,6 +291,7 @@ if __name__ == "__main__":
         if no_increase == args.early_stopping_rounds:
             break
 
+    wandb.summary[f"best_dev_{args.validation_metric}"] = best_dev_metric
     logging.info(f"Best validation {args.validation_metric}: {best_dev_metric:.4f}")
 
     logging.info("Reloading best model for evaluation...")
@@ -345,8 +350,8 @@ if __name__ == "__main__":
                                pred_labels=np.array(dev_preds_word_padded))
     final_dev_f1 = token_f1(true_labels=np.array(dev_true_word_padded),
                             pred_labels=np.array(dev_preds_word_padded))
-    print(f"Dev metrics using best model:"
-          f"P = {final_dev_p:.4f}, R = {final_dev_r:.4f}, F1 = {final_dev_f1:.4f}")
+
+    logging.info(f"Dev metrics using best model: P = {final_dev_p:.4f}, R = {final_dev_r:.4f}, F1 = {final_dev_f1:.4f}")
 
     with open(os.path.join(args.experiment_dir, "pred_visualization.html"), "w", encoding="utf-8") as f:
         dev_words = dev_set.input_sentences
@@ -360,6 +365,6 @@ if __name__ == "__main__":
     # TODO: Obtain predictions on test set with the best model, save them, visualize them
     # ...
 
-
+    wandb.finish()
 
 
