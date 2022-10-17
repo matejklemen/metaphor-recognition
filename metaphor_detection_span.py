@@ -43,10 +43,13 @@ def extract_pred_data(pred_probas: torch.Tensor,
 
 parser = argparse.ArgumentParser()
 parser.add_argument("--experiment_dir", type=str, default="debug_span_modeling")
+parser.add_argument("--mode", type=str, choices=["train", "eval"], default="eval")
 parser.add_argument("--train_path", type=str,
                     default="/home/matej/Documents/metaphor-detection/data/komet_hf_format/train_komet_hf_format.tsv")
 parser.add_argument("--dev_path", type=str,
                     default="/home/matej/Documents/metaphor-detection/data/komet_hf_format/dev_komet_hf_format.tsv")
+parser.add_argument("--test_path", type=str,
+                    default="/home/matej/Documents/metaphor-detection/data/komet_hf_format/test_komet_hf_format.tsv")
 parser.add_argument("--history_prev_sents", type=int, default=0)
 parser.add_argument("--type_scheme", type=str, default="binary", choices=["binary"])
 parser.add_argument("--mrwi", action="store_true")
@@ -73,29 +76,43 @@ parser.add_argument("--use_cpu", action="store_true")
 
 if __name__ == "__main__":
     args = parser.parse_args()
-    if args.stride is None:
-        args.stride = args.max_length // 2
+    if os.path.exists(args.experiment_dir) and args.mode == "train":
+        raise ValueError("--mode=train, but the experiment_dir exists, so the data could accidentally get overriden."
+                         "Please remove the experiment_dir manually and rerun the script")
 
-    if args.random_seed is not None:
-        np.random.seed(args.random_seed)
-        torch.manual_seed(args.random_seed)
-
-    if not torch.cuda.is_available() and not args.use_cpu:
-        args.use_cpu = True
-
-    if not os.path.exists(args.experiment_dir):
-        os.makedirs(args.experiment_dir)
-
-    with open(os.path.join(args.experiment_dir, "experiment_config.json"), "w") as f:
-        json.dump(vars(args), fp=f, indent=4)
+    os.makedirs(args.experiment_dir, exist_ok=True)
 
     # Set up logging to file and stdout
     logger = logging.getLogger()
     logger.setLevel(logging.INFO)
     for curr_handler in [logging.StreamHandler(sys.stdout),
-                         logging.FileHandler(os.path.join(args.experiment_dir, "experiment.log"))]:
+                         logging.FileHandler(os.path.join(args.experiment_dir, f"{args.mode}.log"))]:
         curr_handler.setFormatter(logging.Formatter("%(asctime)s [%(levelname)-5.5s]  %(message)s"))
         logger.addHandler(curr_handler)
+
+    if args.mode == "eval":
+        with open(os.path.join(args.experiment_dir, "experiment_config.json"), "r") as f:
+            existing_config = json.load(f)
+        logging.info("Loading existing config information from experiment_config.json")
+
+        for k, v in existing_config.items():
+            if hasattr(args, k):
+                setattr(args, k, v)
+        args.mode = "eval"
+
+    if args.stride is None:
+        args.stride = args.max_length // 2
+
+    if not torch.cuda.is_available() and not args.use_cpu:
+        args.use_cpu = True
+
+    if args.mode == "train":
+        with open(os.path.join(args.experiment_dir, "experiment_config.json"), "w") as f:
+            json.dump(vars(args), fp=f, indent=4)
+
+    if args.random_seed is not None:
+        np.random.seed(args.random_seed)
+        torch.manual_seed(args.random_seed)
 
     for k, v in vars(args).items():
         v_str = str(v)
@@ -134,236 +151,322 @@ if __name__ == "__main__":
 
     wandb.init(project=args.wandb_project_name, config=vars(args))
 
-    tokenizer = AutoTokenizer.from_pretrained(args.pretrained_name_or_path)
-    model = AutoModelForTokenClassification.from_pretrained(
-        args.pretrained_name_or_path, num_labels=num_types
-    ).to(DEVICE)
-    optimizer = optim.AdamW(params=model.parameters(), lr=args.learning_rate)
+    if args.mode == "train":
+        tokenizer = AutoTokenizer.from_pretrained(args.pretrained_name_or_path)
+        model = AutoModelForTokenClassification.from_pretrained(
+            args.pretrained_name_or_path, num_labels=num_types
+        ).to(DEVICE)
+        optimizer = optim.AdamW(params=model.parameters(), lr=args.learning_rate)
 
-    tokenizer.save_pretrained(args.experiment_dir)
-    model.save_pretrained(args.experiment_dir)
+        tokenizer.save_pretrained(args.experiment_dir)
+        model.save_pretrained(args.experiment_dir)
 
-    df_train = load_df(args.train_path)
-    # Remap valid metaphor types according to the used scheme (e.g., binary metaphors),
-    # keeping track only of positive metaphor spans
-    for idx_ex in range(df_train.shape[0]):
-        new_met_type = []
-        for met_info in df_train.iloc[idx_ex]["met_type"]:
-            new_type = MET_TYPE_MAPPING.get(met_info["type"], "O")
-            if new_type != "O":
-                met_info["type"] = new_type
-                new_met_type.append(met_info)
+        df_train = load_df(args.train_path)
+        # Remap valid metaphor types according to the used scheme (e.g., binary metaphors),
+        # keeping track only of positive metaphor spans
+        for idx_ex in range(df_train.shape[0]):
+            new_met_type = []
+            for met_info in df_train.iloc[idx_ex]["met_type"]:
+                new_type = MET_TYPE_MAPPING.get(met_info["type"], "O")
+                if new_type != "O":
+                    met_info["type"] = new_type
+                    new_met_type.append(met_info)
 
-        df_train.at[idx_ex, "met_type"] = new_met_type
+            df_train.at[idx_ex, "met_type"] = new_met_type
 
-    df_dev = load_df(args.dev_path)
-    for idx_ex in range(df_dev.shape[0]):
-        new_met_type = []
-        for met_info in df_dev.iloc[idx_ex]["met_type"]:
-            new_type = MET_TYPE_MAPPING.get(met_info["type"], "O")
-            if new_type != "O":
-                met_info["type"] = new_type
-                new_met_type.append(met_info)
+        df_dev = load_df(args.dev_path)
+        for idx_ex in range(df_dev.shape[0]):
+            new_met_type = []
+            for met_info in df_dev.iloc[idx_ex]["met_type"]:
+                new_type = MET_TYPE_MAPPING.get(met_info["type"], "O")
+                if new_type != "O":
+                    met_info["type"] = new_type
+                    new_met_type.append(met_info)
 
-        df_dev.at[idx_ex, "met_type"] = new_met_type
+            df_dev.at[idx_ex, "met_type"] = new_met_type
 
-    train_set = TransformersTokenDataset.from_dataframe(df_train, history_prev_sents=args.history_prev_sents,
-                                                        type_encoding=type_encoding, frame_encoding=frame_encoding,
-                                                        max_length=args.max_length, stride=args.stride,
-                                                        tokenizer_or_tokenizer_name=tokenizer)
-    dev_set = TransformersTokenDataset.from_dataframe(df_dev, history_prev_sents=args.history_prev_sents,
-                                                      type_encoding=type_encoding, frame_encoding=frame_encoding,
-                                                      max_length=args.max_length, stride=args.stride,
-                                                      tokenizer_or_tokenizer_name=tokenizer)
+        train_set = TransformersTokenDataset.from_dataframe(df_train, history_prev_sents=args.history_prev_sents,
+                                                            type_encoding=type_encoding, frame_encoding=frame_encoding,
+                                                            max_length=args.max_length, stride=args.stride,
+                                                            tokenizer_or_tokenizer_name=tokenizer)
+        dev_set = TransformersTokenDataset.from_dataframe(df_dev, history_prev_sents=args.history_prev_sents,
+                                                          type_encoding=type_encoding, frame_encoding=frame_encoding,
+                                                          max_length=args.max_length, stride=args.stride,
+                                                          tokenizer_or_tokenizer_name=tokenizer)
 
-    logging.info(f"{len(train_set)} training instances, {len(dev_set)} validation instances")
+        logging.info(f"Loaded {len(train_set)} training instances, {len(dev_set)} validation instances")
 
-    loss_fn = nn.NLLLoss()
-    validation_fn = lambda y_true, y_pred: 0.0  # placeholder
-    if args.validation_metric == "f1_score_binary":
-        validation_fn = lambda y_true, y_pred: token_f1(true_labels=y_true, pred_labels=y_pred, pos_label=1)
-    else:
-        raise NotImplementedError(args.validation_metric)
+        loss_fn = nn.NLLLoss()
+        validation_fn = lambda y_true, y_pred: 0.0  # placeholder
+        if args.validation_metric == "f1_score_binary":
+            validation_fn = lambda y_true, y_pred: token_f1(true_labels=y_true, pred_labels=y_pred, pos_label=1)
+        else:
+            raise NotImplementedError(args.validation_metric)
 
-    num_subsets = (len(train_set) + args.validate_every_n_examples - 1) // args.validate_every_n_examples
-    best_dev_metric, no_increase = 0.0, 0
+        num_subsets = (len(train_set) + args.validate_every_n_examples - 1) // args.validate_every_n_examples
+        best_dev_metric, no_increase = 0.0, 0
 
-    for idx_epoch in range(args.num_epochs):
-        train_loss, nb = 0.0, 0
-        shuf_indices = torch.randperm(len(train_set))
+        for idx_epoch in range(args.num_epochs):
+            train_loss, nb = 0.0, 0
+            shuf_indices = torch.randperm(len(train_set))
 
-        for idx_subset in range(num_subsets):
-            # 1. Training step
-            model.train()
-            s_sub, e_sub = idx_subset * args.validate_every_n_examples, \
-                           (idx_subset + 1) * args.validate_every_n_examples
-            sub_indices = shuf_indices[s_sub: e_sub]
-            num_tr_batches = (sub_indices.shape[0] + args.batch_size - 1) // args.batch_size
+            for idx_subset in range(num_subsets):
+                # 1. Training step
+                model.train()
+                s_sub, e_sub = idx_subset * args.validate_every_n_examples, \
+                               (idx_subset + 1) * args.validate_every_n_examples
+                sub_indices = shuf_indices[s_sub: e_sub]
+                num_tr_batches = (sub_indices.shape[0] + args.batch_size - 1) // args.batch_size
 
-            for idx_batch in trange(num_tr_batches):
-                s_b, e_b = idx_batch * args.batch_size, (idx_batch + 1) * args.batch_size
-                curr_batch = train_set[sub_indices[s_b: e_b]]
-
-                indices = curr_batch["indices"]
-                curr_batch_device = {_k: _v.to(DEVICE) for _k, _v in curr_batch.items()
-                                     if _k not in {"indices", "special_tokens_mask"}}
-                ground_truth = train_set.targets(indices)
-                expected_types = ground_truth["met_type"]
-
-                probas = torch.softmax(model(**curr_batch_device)["logits"], dim=-1)
-                pred_logproba, correct_class = extract_pred_data(probas, expected_types,
-                                                                 curr_batch["special_tokens_mask"].to(DEVICE))
-                pred_logproba = pred_logproba.to(DEVICE)
-                correct_class = correct_class.to(DEVICE)
-
-                loss = loss_fn(pred_logproba, correct_class)
-                train_loss += float(loss.cpu())
-                nb += 1
-
-                loss.backward()
-                optimizer.step()
-                optimizer.zero_grad()
-
-            logging.info(f"[Subset #{1 + idx_subset}/{num_subsets}] Train loss: {train_loss / max(1, nb):.4f}")
-
-            if sub_indices.shape[0] < (args.validate_every_n_examples // 2):
-                logging.info(f"\tSKIPPING validation because current training subset was too small "
-                             f"({sub_indices.shape[0]} < {args.validate_every_n_examples // 2} examples)")
-                continue
-
-            # 2. Validation step
-            with torch.inference_mode():
-                model.eval()
-
-                num_dev_batches = (len(dev_set) + DEV_BATCH_SIZE - 1) // DEV_BATCH_SIZE
-                dev_indices = torch.arange(len(dev_set))
-
-                dev_preds_dense = []
-                dev_true_dense = []
-
-                for idx_batch in trange(num_dev_batches):
-                    s_b, e_b = idx_batch * DEV_BATCH_SIZE, (idx_batch + 1) * DEV_BATCH_SIZE
-                    batch_indices = dev_indices[s_b: e_b]
-                    curr_batch = dev_set[batch_indices]
+                for idx_batch in trange(num_tr_batches):
+                    s_b, e_b = idx_batch * args.batch_size, (idx_batch + 1) * args.batch_size
+                    curr_batch = train_set[sub_indices[s_b: e_b]]
 
                     indices = curr_batch["indices"]
                     curr_batch_device = {_k: _v.to(DEVICE) for _k, _v in curr_batch.items()
                                          if _k not in {"indices", "special_tokens_mask"}}
-                    ground_truth = dev_set.targets(indices)
+                    ground_truth = train_set.targets(indices)
                     expected_types = ground_truth["met_type"]
 
                     probas = torch.softmax(model(**curr_batch_device)["logits"], dim=-1)
+                    pred_logproba, correct_class = extract_pred_data(probas, expected_types,
+                                                                     curr_batch["special_tokens_mask"].to(DEVICE))
+                    pred_logproba = pred_logproba.to(DEVICE)
+                    correct_class = correct_class.to(DEVICE)
 
-                    # Dev set: group predictions at word-level to ensure comparability across different models
-                    _dev_preds = torch.argmax(probas, dim=-1).cpu()
-                    dev_preds_dense.append(_dev_preds)
+                    loss = loss_fn(pred_logproba, correct_class)
+                    train_loss += float(loss.cpu())
+                    nb += 1
 
-                    # TODO: this could be precomputed once
-                    _dev_true = torch.zeros_like(_dev_preds)  # zeros_like because 0 == fallback index
-                    for idx_ex in range(_dev_true.shape[0]):
-                        for met_info in expected_types[idx_ex]:
-                            _dev_true[idx_ex, met_info["subword_indices"]] = met_info["type"]
-                    dev_true_dense.append(_dev_true)
+                    loss.backward()
+                    optimizer.step()
+                    optimizer.zero_grad()
 
-            dev_preds_dense = torch.cat(dev_preds_dense)
-            dev_preds_word = dev_set.word_predictions(dev_preds_dense, pad=True)
+                logging.info(f"[Subset #{1 + idx_subset}/{num_subsets}] Train loss: {train_loss / max(1, nb):.4f}")
 
-            dev_true_dense = torch.cat(dev_true_dense)
-            dev_true_word = dev_set.word_predictions(dev_true_dense, pad=True)
+                if sub_indices.shape[0] < (args.validate_every_n_examples // 2):
+                    logging.info(f"\tSKIPPING validation because current training subset was too small "
+                                 f"({sub_indices.shape[0]} < {args.validate_every_n_examples // 2} examples)")
+                    continue
 
-            dev_metric = validation_fn(y_true=np.array(dev_true_word), y_pred=np.array(dev_preds_word))
-            logging.info(f"\tValidation {args.validation_metric}: {dev_metric:.4f}")
-            wandb.log({f"dev_{args.validation_metric}": dev_metric})
+                # 2. Validation step
+                with torch.inference_mode():
+                    model.eval()
 
-            if dev_metric > best_dev_metric:
-                logging.info(f"\t\tNew best, saving checkpoint!")
-                model.save_pretrained(args.experiment_dir)
-                best_dev_metric = dev_metric
-                no_increase = 0
-            else:
-                no_increase += 1
+                    num_dev_batches = (len(dev_set) + DEV_BATCH_SIZE - 1) // DEV_BATCH_SIZE
+                    dev_indices = torch.arange(len(dev_set))
+
+                    dev_preds_dense = []
+                    dev_true_dense = []
+
+                    for idx_batch in trange(num_dev_batches):
+                        s_b, e_b = idx_batch * DEV_BATCH_SIZE, (idx_batch + 1) * DEV_BATCH_SIZE
+                        batch_indices = dev_indices[s_b: e_b]
+                        curr_batch = dev_set[batch_indices]
+
+                        indices = curr_batch["indices"]
+                        curr_batch_device = {_k: _v.to(DEVICE) for _k, _v in curr_batch.items()
+                                             if _k not in {"indices", "special_tokens_mask"}}
+                        ground_truth = dev_set.targets(indices)
+                        expected_types = ground_truth["met_type"]
+
+                        probas = torch.softmax(model(**curr_batch_device)["logits"], dim=-1)
+
+                        # Dev set: group predictions at word-level to ensure comparability across different models
+                        _dev_preds = torch.argmax(probas, dim=-1).cpu()
+                        dev_preds_dense.append(_dev_preds)
+
+                        # TODO: this could be precomputed once
+                        _dev_true = torch.zeros_like(_dev_preds)  # zeros_like because 0 == fallback index
+                        for idx_ex in range(_dev_true.shape[0]):
+                            for met_info in expected_types[idx_ex]:
+                                _dev_true[idx_ex, met_info["subword_indices"]] = met_info["type"]
+                        dev_true_dense.append(_dev_true)
+
+                dev_preds_dense = torch.cat(dev_preds_dense)
+                dev_preds_word = dev_set.word_predictions(dev_preds_dense, pad=True)
+
+                dev_true_dense = torch.cat(dev_true_dense)
+                dev_true_word = dev_set.word_predictions(dev_true_dense, pad=True)
+
+                dev_metric = validation_fn(y_true=np.array(dev_true_word), y_pred=np.array(dev_preds_word))
+                logging.info(f"\tValidation {args.validation_metric}: {dev_metric:.4f}")
+                wandb.log({f"dev_{args.validation_metric}": dev_metric})
+
+                if dev_metric > best_dev_metric:
+                    logging.info(f"\t\tNew best, saving checkpoint!")
+                    model.save_pretrained(args.experiment_dir)
+                    best_dev_metric = dev_metric
+                    no_increase = 0
+                else:
+                    no_increase += 1
+
+                if no_increase == args.early_stopping_rounds:
+                    logging.info(f"Stopping early because the validation metric did not improve "
+                                 f"for {args.early_stopping_rounds} rounds")
+                    break
 
             if no_increase == args.early_stopping_rounds:
-                logging.info(f"Stopping early because the validation metric did not improve "
-                             f"for {args.early_stopping_rounds} rounds")
                 break
 
-        if no_increase == args.early_stopping_rounds:
-            break
+        wandb.summary[f"best_dev_{args.validation_metric}"] = best_dev_metric
+        logging.info(f"Best validation {args.validation_metric}: {best_dev_metric:.4f}")
 
-    wandb.summary[f"best_dev_{args.validation_metric}"] = best_dev_metric
-    logging.info(f"Best validation {args.validation_metric}: {best_dev_metric:.4f}")
+        logging.info("Reloading best model for evaluation...")
+        model = AutoModelForTokenClassification.from_pretrained(args.experiment_dir).to(DEVICE)
 
-    logging.info("Reloading best model for evaluation...")
-    model = AutoModelForTokenClassification.from_pretrained(args.experiment_dir).to(DEVICE)
+        # Obtain predictions on validation set with the best model, save them, visualize them
+        with torch.inference_mode():
+            model.eval()
 
-    # Obtain predictions on validation set with the best model, save them, visualize them
-    # 2. Validation step
+            num_dev_batches = (len(dev_set) + DEV_BATCH_SIZE - 1) // DEV_BATCH_SIZE
+            dev_indices = torch.arange(len(dev_set))
+            dev_preds_dense, dev_true_dense = [], []
+
+            for idx_batch in trange(num_dev_batches):
+                s_b, e_b = idx_batch * DEV_BATCH_SIZE, (idx_batch + 1) * DEV_BATCH_SIZE
+                batch_indices = dev_indices[s_b: e_b]
+                curr_batch = dev_set[batch_indices]
+
+                indices = curr_batch["indices"]
+                curr_batch_device = {_k: _v.to(DEVICE) for _k, _v in curr_batch.items()
+                                     if _k not in {"indices", "special_tokens_mask"}}
+                ground_truth = dev_set.targets(indices)
+                expected_types = ground_truth["met_type"]
+
+                probas = torch.softmax(model(**curr_batch_device)["logits"], dim=-1)
+
+                # Dev set: group predictions at word-level to ensure comparability across different models
+                _dev_preds = torch.argmax(probas, dim=-1).cpu()
+                dev_preds_dense.append(_dev_preds)
+
+                # TODO: this could be precomputed once
+                _dev_true = torch.zeros_like(_dev_preds)  # zeros_like because 0 == fallback index
+                for idx_ex in range(_dev_true.shape[0]):
+                    for met_info in expected_types[idx_ex]:
+                        _dev_true[idx_ex, met_info["subword_indices"]] = met_info["type"]
+                dev_true_dense.append(_dev_true)
+
+        dev_preds_dense = torch.cat(dev_preds_dense)
+        dev_preds_word_padded = dev_set.word_predictions(dev_preds_dense, pad=True)
+        dev_preds_word_unpadded = list(
+            map(lambda instance_types: list(map(lambda _idx_type: rev_type_encoding[_idx_type], instance_types)),
+                dev_set.word_predictions(dev_preds_dense, pad=False))
+        )
+
+        dev_true_dense = torch.cat(dev_true_dense)
+        dev_true_word_padded = dev_set.word_predictions(dev_true_dense, pad=True)
+        dev_true_word_unpadded = list(
+            map(lambda instance_types: list(map(lambda _idx_type: rev_type_encoding[_idx_type], instance_types)),
+                dev_set.word_predictions(dev_true_dense, pad=False))
+        )
+
+        final_dev_p = token_precision(true_labels=np.array(dev_true_word_padded),
+                                      pred_labels=np.array(dev_preds_word_padded))
+        final_dev_r = token_recall(true_labels=np.array(dev_true_word_padded),
+                                   pred_labels=np.array(dev_preds_word_padded))
+        final_dev_f1 = token_f1(true_labels=np.array(dev_true_word_padded),
+                                pred_labels=np.array(dev_preds_word_padded))
+
+        logging.info(f"Dev metrics using best model: P = {final_dev_p:.4f}, R = {final_dev_r:.4f}, F1 = {final_dev_f1:.4f}")
+
+        with open(os.path.join(args.experiment_dir, "pred_visualization.html"), "w", encoding="utf-8") as f:
+            dev_words = dev_set.input_sentences
+            visualization_html = visualize_token_predictions(dev_words, dev_preds_word_unpadded, dev_true_word_unpadded)
+            print(visualization_html, file=f)
+
+        df_dev["preds_transformed"] = dev_preds_word_unpadded
+        df_dev["true_transformed"] = dev_true_word_unpadded
+        df_dev.to_csv(os.path.join(args.experiment_dir, "dev_results.tsv"), index=False, sep="\t")
+
+    if args.mode == "eval":
+        tokenizer = AutoTokenizer.from_pretrained(args.experiment_dir)
+        model = AutoModelForTokenClassification.from_pretrained(args.experiment_dir).to(DEVICE)
+
+    df_test = load_df(args.test_path)
+    for idx_ex in range(df_test.shape[0]):
+        new_met_type = []
+        for met_info in df_test.iloc[idx_ex]["met_type"]:
+            new_type = MET_TYPE_MAPPING.get(met_info["type"], "O")
+            if new_type != "O":
+                met_info["type"] = new_type
+                new_met_type.append(met_info)
+
+        df_test.at[idx_ex, "met_type"] = new_met_type
+
+    test_set = TransformersTokenDataset.from_dataframe(df_test, history_prev_sents=args.history_prev_sents,
+                                                       type_encoding=type_encoding, frame_encoding=frame_encoding,
+                                                       max_length=args.max_length, stride=args.stride,
+                                                       tokenizer_or_tokenizer_name=tokenizer)
+
+    # Obtain predictions on TEST set with the best model, save them, visualize them
     with torch.inference_mode():
         model.eval()
 
-        num_dev_batches = (len(dev_set) + DEV_BATCH_SIZE - 1) // DEV_BATCH_SIZE
-        dev_indices = torch.arange(len(dev_set))
-        dev_preds_dense, dev_true_dense = [], []
+        num_test_batches = (len(test_set) + DEV_BATCH_SIZE - 1) // DEV_BATCH_SIZE
+        test_indices = torch.arange(len(test_set))
+        test_preds_dense, test_true_dense = [], []
 
-        for idx_batch in trange(num_dev_batches):
+        for idx_batch in trange(num_test_batches):
             s_b, e_b = idx_batch * DEV_BATCH_SIZE, (idx_batch + 1) * DEV_BATCH_SIZE
-            batch_indices = dev_indices[s_b: e_b]
-            curr_batch = dev_set[batch_indices]
+            batch_indices = test_indices[s_b: e_b]
+            curr_batch = test_set[batch_indices]
 
             indices = curr_batch["indices"]
             curr_batch_device = {_k: _v.to(DEVICE) for _k, _v in curr_batch.items()
                                  if _k not in {"indices", "special_tokens_mask"}}
-            ground_truth = dev_set.targets(indices)
+            ground_truth = test_set.targets(indices)
             expected_types = ground_truth["met_type"]
 
             probas = torch.softmax(model(**curr_batch_device)["logits"], dim=-1)
 
-            # Dev set: group predictions at word-level to ensure comparability across different models
-            _dev_preds = torch.argmax(probas, dim=-1).cpu()
-            dev_preds_dense.append(_dev_preds)
+            # Test set: group predictions at word-level to ensure comparability across different models
+            _test_preds = torch.argmax(probas, dim=-1).cpu()
+            test_preds_dense.append(_test_preds)
 
             # TODO: this could be precomputed once
-            _dev_true = torch.zeros_like(_dev_preds)  # zeros_like because 0 == fallback index
-            for idx_ex in range(_dev_true.shape[0]):
+            _test_true = torch.zeros_like(_test_preds)  # zeros_like because 0 == fallback index
+            for idx_ex in range(_test_true.shape[0]):
                 for met_info in expected_types[idx_ex]:
-                    _dev_true[idx_ex, met_info["subword_indices"]] = met_info["type"]
-            dev_true_dense.append(_dev_true)
+                    _test_true[idx_ex, met_info["subword_indices"]] = met_info["type"]
+            test_true_dense.append(_test_true)
 
-    dev_preds_dense = torch.cat(dev_preds_dense)
-    dev_preds_word_padded = dev_set.word_predictions(dev_preds_dense, pad=True)
-    dev_preds_word_unpadded = list(
+    test_preds_dense = torch.cat(test_preds_dense)
+    test_preds_word_padded = test_set.word_predictions(test_preds_dense, pad=True)
+    test_preds_word_unpadded = list(
         map(lambda instance_types: list(map(lambda _idx_type: rev_type_encoding[_idx_type], instance_types)),
-            dev_set.word_predictions(dev_preds_dense, pad=False))
+            test_set.word_predictions(test_preds_dense, pad=False))
     )
 
-    dev_true_dense = torch.cat(dev_true_dense)
-    dev_true_word_padded = dev_set.word_predictions(dev_true_dense, pad=True)
-    dev_true_word_unpadded = list(
+    test_true_dense = torch.cat(test_true_dense)
+    test_true_word_padded = test_set.word_predictions(test_true_dense, pad=True)
+    test_true_word_unpadded = list(
         map(lambda instance_types: list(map(lambda _idx_type: rev_type_encoding[_idx_type], instance_types)),
-            dev_set.word_predictions(dev_true_dense, pad=False))
+            test_set.word_predictions(test_true_dense, pad=False))
     )
 
-    final_dev_p = token_precision(true_labels=np.array(dev_true_word_padded),
-                                  pred_labels=np.array(dev_preds_word_padded))
-    final_dev_r = token_recall(true_labels=np.array(dev_true_word_padded),
-                               pred_labels=np.array(dev_preds_word_padded))
-    final_dev_f1 = token_f1(true_labels=np.array(dev_true_word_padded),
-                            pred_labels=np.array(dev_preds_word_padded))
+    final_test_p = token_precision(true_labels=np.array(test_true_word_padded),
+                                   pred_labels=np.array(test_preds_word_padded))
+    final_test_r = token_recall(true_labels=np.array(test_true_word_padded),
+                                pred_labels=np.array(test_preds_word_padded))
+    final_test_f1 = token_f1(true_labels=np.array(test_true_word_padded),
+                             pred_labels=np.array(test_preds_word_padded))
 
-    logging.info(f"Dev metrics using best model: P = {final_dev_p:.4f}, R = {final_dev_r:.4f}, F1 = {final_dev_f1:.4f}")
+    logging.info(f"Test metrics using best model: P = {final_test_p:.4f}, R = {final_test_r:.4f}, F1 = {final_test_f1:.4f}")
+    wandb.log({
+        "test_p": final_test_p,
+        "test_r": final_test_r,
+        "test_f1": final_test_f1
+    })
 
-    with open(os.path.join(args.experiment_dir, "pred_visualization.html"), "w", encoding="utf-8") as f:
-        dev_words = dev_set.input_sentences
-        visualization_html = visualize_token_predictions(dev_words, dev_preds_word_unpadded, dev_true_word_unpadded)
+    with open(os.path.join(args.experiment_dir, "pred_visualization_test.html"), "w", encoding="utf-8") as f:
+        test_words = test_set.input_sentences
+        visualization_html = visualize_token_predictions(test_words, test_preds_word_unpadded, test_true_word_unpadded)
         print(visualization_html, file=f)
 
-    df_dev["preds_transformed"] = dev_preds_word_unpadded
-    df_dev["true_transformed"] = dev_true_word_unpadded
-    df_dev.to_csv(os.path.join(args.experiment_dir, "dev_results.tsv"), index=False, sep="\t")
-
-    # TODO: Obtain predictions on test set with the best model, save them, visualize them
-    # ...
+    df_test["preds_transformed"] = test_preds_word_unpadded
+    df_test["true_transformed"] = test_true_word_unpadded
+    df_test.to_csv(os.path.join(args.experiment_dir, "test_results.tsv"), index=False, sep="\t")
 
     wandb.finish()
 
