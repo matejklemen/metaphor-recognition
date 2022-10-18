@@ -1,4 +1,5 @@
 import argparse
+import itertools
 import json
 import logging
 import os
@@ -15,6 +16,9 @@ from transformers import AutoTokenizer, AutoModelForTokenClassification
 
 from data_span import TransformersTokenDataset, load_df
 from utils import token_f1, token_precision, token_recall, visualize_token_predictions
+
+
+MAX_THRESH_TO_CHECK = 100
 
 
 def extract_pred_data(pred_probas: torch.Tensor,
@@ -43,7 +47,7 @@ def extract_pred_data(pred_probas: torch.Tensor,
 
 parser = argparse.ArgumentParser()
 parser.add_argument("--experiment_dir", type=str, default="debug_span_modeling")
-parser.add_argument("--mode", type=str, choices=["train", "eval"], default="eval")
+parser.add_argument("--mode", type=str, choices=["train", "eval"], default="train")
 parser.add_argument("--train_path", type=str,
                     default="/home/matej/Documents/metaphor-detection/data/komet_hf_format/train_komet_hf_format.tsv")
 parser.add_argument("--dev_path", type=str,
@@ -69,6 +73,11 @@ parser.add_argument("--validate_every_n_examples", type=int, default=3000)
 parser.add_argument("--early_stopping_rounds", type=int, default=5)
 parser.add_argument("--validation_metric", type=str, default="f1_score_binary",
                     choices=["f1_score_binary"])
+parser.add_argument("--optimize_bin_threshold", action="store_true",
+                    help="If set and '--type_scheme' is binary, optimize the decision threshold on the validation set "
+                         "using the best model")
+parser.add_argument("--decision_threshold_bin", type=float, default=None,
+                    help="Specify a decision threshold to be used in binary classification of metaphors")
 
 parser.add_argument("--wandb_project_name", type=str, default="metaphor-komet-token-span-optimization")
 parser.add_argument("--random_seed", type=int, default=17)
@@ -151,6 +160,7 @@ if __name__ == "__main__":
 
     wandb.init(project=args.wandb_project_name, config=vars(args))
 
+    best_thresh = None
     if args.mode == "train":
         tokenizer = AutoTokenizer.from_pretrained(args.pretrained_name_or_path)
         model = AutoModelForTokenClassification.from_pretrained(
@@ -193,6 +203,17 @@ if __name__ == "__main__":
                                                           type_encoding=type_encoding, frame_encoding=frame_encoding,
                                                           max_length=args.max_length, stride=args.stride,
                                                           tokenizer_or_tokenizer_name=tokenizer)
+
+        dev_true_dense = []
+        _dev_true = torch.zeros_like(dev_set.model_data["input_ids"])  # zeros_like because 0 == fallback index
+        expected_types = dev_set.target_data["met_type"]
+        for idx_ex in range(_dev_true.shape[0]):
+            for met_info in expected_types[idx_ex]:
+                _dev_true[idx_ex, met_info["subword_indices"]] = met_info["type"]
+        dev_true_dense.append(_dev_true)
+        dev_true_dense = torch.cat(dev_true_dense)
+        dev_true_word_padded: np.ndarray = np.array(dev_set.word_predictions(dev_true_dense, pad=True))
+        dev_true_word_unpadded: List[List[int]] = dev_set.word_predictions(dev_true_dense, pad=False)
 
         logging.info(f"Loaded {len(train_set)} training instances, {len(dev_set)} validation instances")
 
@@ -257,7 +278,6 @@ if __name__ == "__main__":
                     dev_indices = torch.arange(len(dev_set))
 
                     dev_preds_dense = []
-                    dev_true_dense = []
 
                     for idx_batch in trange(num_dev_batches):
                         s_b, e_b = idx_batch * DEV_BATCH_SIZE, (idx_batch + 1) * DEV_BATCH_SIZE
@@ -267,8 +287,6 @@ if __name__ == "__main__":
                         indices = curr_batch["indices"]
                         curr_batch_device = {_k: _v.to(DEVICE) for _k, _v in curr_batch.items()
                                              if _k not in {"indices", "special_tokens_mask"}}
-                        ground_truth = dev_set.targets(indices)
-                        expected_types = ground_truth["met_type"]
 
                         probas = torch.softmax(model(**curr_batch_device)["logits"], dim=-1)
 
@@ -276,20 +294,10 @@ if __name__ == "__main__":
                         _dev_preds = torch.argmax(probas, dim=-1).cpu()
                         dev_preds_dense.append(_dev_preds)
 
-                        # TODO: this could be precomputed once
-                        _dev_true = torch.zeros_like(_dev_preds)  # zeros_like because 0 == fallback index
-                        for idx_ex in range(_dev_true.shape[0]):
-                            for met_info in expected_types[idx_ex]:
-                                _dev_true[idx_ex, met_info["subword_indices"]] = met_info["type"]
-                        dev_true_dense.append(_dev_true)
-
                 dev_preds_dense = torch.cat(dev_preds_dense)
                 dev_preds_word = dev_set.word_predictions(dev_preds_dense, pad=True)
 
-                dev_true_dense = torch.cat(dev_true_dense)
-                dev_true_word = dev_set.word_predictions(dev_true_dense, pad=True)
-
-                dev_metric = validation_fn(y_true=np.array(dev_true_word), y_pred=np.array(dev_preds_word))
+                dev_metric = validation_fn(y_true=dev_true_word_padded, y_pred=np.array(dev_preds_word))
                 logging.info(f"\tValidation {args.validation_metric}: {dev_metric:.4f}")
                 wandb.log({f"dev_{args.validation_metric}": dev_metric})
 
@@ -321,7 +329,8 @@ if __name__ == "__main__":
 
             num_dev_batches = (len(dev_set) + DEV_BATCH_SIZE - 1) // DEV_BATCH_SIZE
             dev_indices = torch.arange(len(dev_set))
-            dev_preds_dense, dev_true_dense = [], []
+            dev_preds_dense = []
+            dev_probas_dense = []
 
             for idx_batch in trange(num_dev_batches):
                 s_b, e_b = idx_batch * DEV_BATCH_SIZE, (idx_batch + 1) * DEV_BATCH_SIZE
@@ -331,8 +340,6 @@ if __name__ == "__main__":
                 indices = curr_batch["indices"]
                 curr_batch_device = {_k: _v.to(DEVICE) for _k, _v in curr_batch.items()
                                      if _k not in {"indices", "special_tokens_mask"}}
-                ground_truth = dev_set.targets(indices)
-                expected_types = ground_truth["met_type"]
 
                 probas = torch.softmax(model(**curr_batch_device)["logits"], dim=-1)
 
@@ -340,32 +347,44 @@ if __name__ == "__main__":
                 _dev_preds = torch.argmax(probas, dim=-1).cpu()
                 dev_preds_dense.append(_dev_preds)
 
-                # TODO: this could be precomputed once
-                _dev_true = torch.zeros_like(_dev_preds)  # zeros_like because 0 == fallback index
-                for idx_ex in range(_dev_true.shape[0]):
-                    for met_info in expected_types[idx_ex]:
-                        _dev_true[idx_ex, met_info["subword_indices"]] = met_info["type"]
-                dev_true_dense.append(_dev_true)
+                dev_probas_dense.append(probas.cpu())
 
-        dev_preds_dense = torch.cat(dev_preds_dense)
+        dev_probas_dense = torch.cat(dev_probas_dense)
+        if args.optimize_bin_threshold:
+            thresh_to_check = sorted(list(set(list(itertools.chain(*dev_probas_dense[:, :, 1].tolist())))))
+            if len(thresh_to_check) > MAX_THRESH_TO_CHECK:
+                step_size = len(thresh_to_check) // MAX_THRESH_TO_CHECK
+                thresh_to_check = thresh_to_check[::step_size][:MAX_THRESH_TO_CHECK]
+
+            best_thresh, metric_with_best_thresh = None, 0.0
+            for curr_thresh in thresh_to_check:
+                dev_preds_dense = (dev_probas_dense[:, :, 1] >= curr_thresh).int()
+                dev_preds_word_padded = np.array(dev_set.word_predictions(dev_preds_dense, pad=True))
+                curr_metric = validation_fn(y_true=dev_true_word_padded, y_pred=dev_preds_word_padded)
+                if curr_metric > metric_with_best_thresh:
+                    best_thresh = curr_thresh
+                    metric_with_best_thresh = curr_metric
+
+            logging.info(f"[Threshold optimization] Best T={best_thresh}, validation {args.validation_metric} = {metric_with_best_thresh:.4f}")
+            dev_preds_dense = (dev_probas_dense[:, :, 1] >= best_thresh).int()
+        else:
+            dev_preds_dense = torch.argmax(dev_probas_dense, dim=-1)
+
         dev_preds_word_padded = dev_set.word_predictions(dev_preds_dense, pad=True)
         dev_preds_word_unpadded = list(
             map(lambda instance_types: list(map(lambda _idx_type: rev_type_encoding[_idx_type], instance_types)),
                 dev_set.word_predictions(dev_preds_dense, pad=False))
         )
 
-        dev_true_dense = torch.cat(dev_true_dense)
-        dev_true_word_padded = dev_set.word_predictions(dev_true_dense, pad=True)
-        dev_true_word_unpadded = list(
-            map(lambda instance_types: list(map(lambda _idx_type: rev_type_encoding[_idx_type], instance_types)),
-                dev_set.word_predictions(dev_true_dense, pad=False))
+        dev_true_word_unpadded: List[List[str]] = list(
+            map(lambda instance_types: list(map(lambda _idx_type: rev_type_encoding[_idx_type], instance_types)), dev_true_word_unpadded)
         )
 
-        final_dev_p = token_precision(true_labels=np.array(dev_true_word_padded),
+        final_dev_p = token_precision(true_labels=dev_true_word_padded,
                                       pred_labels=np.array(dev_preds_word_padded))
-        final_dev_r = token_recall(true_labels=np.array(dev_true_word_padded),
+        final_dev_r = token_recall(true_labels=dev_true_word_padded,
                                    pred_labels=np.array(dev_preds_word_padded))
-        final_dev_f1 = token_f1(true_labels=np.array(dev_true_word_padded),
+        final_dev_f1 = token_f1(true_labels=dev_true_word_padded,
                                 pred_labels=np.array(dev_preds_word_padded))
 
         logging.info(f"Dev metrics using best model: P = {final_dev_p:.4f}, R = {final_dev_r:.4f}, F1 = {final_dev_f1:.4f}")
@@ -399,13 +418,26 @@ if __name__ == "__main__":
                                                        max_length=args.max_length, stride=args.stride,
                                                        tokenizer_or_tokenizer_name=tokenizer)
 
+    logging.info(f"Loaded {len(test_set)} test instances")
+
+    test_true_dense = []
+    _test_true = torch.zeros_like(test_set.model_data["input_ids"])  # zeros_like because 0 == fallback index
+    expected_types = test_set.target_data["met_type"]
+    for idx_ex in range(_test_true.shape[0]):
+        for met_info in expected_types[idx_ex]:
+            _test_true[idx_ex, met_info["subword_indices"]] = met_info["type"]
+    test_true_dense.append(_test_true)
+    test_true_dense = torch.cat(test_true_dense)
+    test_true_word_padded: np.ndarray = np.array(test_set.word_predictions(test_true_dense, pad=True))
+    test_true_word_unpadded: List[List[int]] = test_set.word_predictions(test_true_dense, pad=False)
+
     # Obtain predictions on TEST set with the best model, save them, visualize them
     with torch.inference_mode():
         model.eval()
 
         num_test_batches = (len(test_set) + DEV_BATCH_SIZE - 1) // DEV_BATCH_SIZE
         test_indices = torch.arange(len(test_set))
-        test_preds_dense, test_true_dense = [], []
+        test_probas_dense = []
 
         for idx_batch in trange(num_test_batches):
             s_b, e_b = idx_batch * DEV_BATCH_SIZE, (idx_batch + 1) * DEV_BATCH_SIZE
@@ -415,41 +447,39 @@ if __name__ == "__main__":
             indices = curr_batch["indices"]
             curr_batch_device = {_k: _v.to(DEVICE) for _k, _v in curr_batch.items()
                                  if _k not in {"indices", "special_tokens_mask"}}
-            ground_truth = test_set.targets(indices)
-            expected_types = ground_truth["met_type"]
 
             probas = torch.softmax(model(**curr_batch_device)["logits"], dim=-1)
+            test_probas_dense.append(probas.cpu())
 
-            # Test set: group predictions at word-level to ensure comparability across different models
-            _test_preds = torch.argmax(probas, dim=-1).cpu()
-            test_preds_dense.append(_test_preds)
+    test_probas_dense = torch.cat(test_probas_dense)
+    # If only running the evaluation part, allow the user to specify a custom decision threshold
+    if best_thresh is None and args.type_scheme == "binary":
+        best_thresh = args.decision_threshold_bin
+        logging.info(f"Using manually specified decision threshold T={best_thresh}")
 
-            # TODO: this could be precomputed once
-            _test_true = torch.zeros_like(_test_preds)  # zeros_like because 0 == fallback index
-            for idx_ex in range(_test_true.shape[0]):
-                for met_info in expected_types[idx_ex]:
-                    _test_true[idx_ex, met_info["subword_indices"]] = met_info["type"]
-            test_true_dense.append(_test_true)
+    # If the decision threshold is neither automatically or manually determined, default to argmax
+    if best_thresh is None:
+        logging.warning("Decision threshold was neither automatically nor manually determined, using argmax")
+        test_preds_dense = torch.argmax(test_probas_dense, dim=-1)
+    else:
+        test_preds_dense = (test_probas_dense[:, :, 1] >= best_thresh).int()
 
-    test_preds_dense = torch.cat(test_preds_dense)
     test_preds_word_padded = test_set.word_predictions(test_preds_dense, pad=True)
     test_preds_word_unpadded = list(
         map(lambda instance_types: list(map(lambda _idx_type: rev_type_encoding[_idx_type], instance_types)),
             test_set.word_predictions(test_preds_dense, pad=False))
     )
 
-    test_true_dense = torch.cat(test_true_dense)
-    test_true_word_padded = test_set.word_predictions(test_true_dense, pad=True)
     test_true_word_unpadded = list(
         map(lambda instance_types: list(map(lambda _idx_type: rev_type_encoding[_idx_type], instance_types)),
-            test_set.word_predictions(test_true_dense, pad=False))
+            test_true_word_unpadded)
     )
 
-    final_test_p = token_precision(true_labels=np.array(test_true_word_padded),
+    final_test_p = token_precision(true_labels=test_true_word_padded,
                                    pred_labels=np.array(test_preds_word_padded))
-    final_test_r = token_recall(true_labels=np.array(test_true_word_padded),
+    final_test_r = token_recall(true_labels=test_true_word_padded,
                                 pred_labels=np.array(test_preds_word_padded))
-    final_test_f1 = token_f1(true_labels=np.array(test_true_word_padded),
+    final_test_f1 = token_f1(true_labels=test_true_word_padded,
                              pred_labels=np.array(test_preds_word_padded))
 
     logging.info(f"Test metrics using best model: P = {final_test_p:.4f}, R = {final_test_r:.4f}, F1 = {final_test_f1:.4f}")
