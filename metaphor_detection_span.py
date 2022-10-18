@@ -369,6 +369,7 @@ if __name__ == "__main__":
                     best_thresh = curr_thresh
                     metric_with_best_thresh = curr_metric
 
+            wandb.log({f"dev_{args.validation_metric}": metric_with_best_thresh})
             logging.info(f"[Threshold optimization] Best T={best_thresh}, validation {args.validation_metric} = {metric_with_best_thresh:.4f}")
             dev_preds_dense = (dev_probas_dense[:, :, 1] >= best_thresh).int()
         else:
