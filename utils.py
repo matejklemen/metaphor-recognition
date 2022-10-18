@@ -1,8 +1,8 @@
+import torch
 from sklearn.metrics import precision_score, recall_score, f1_score, \
 	average_precision_score, precision_recall_curve
-import torch
 
-from data import LOSS_IGNORE_INDEX
+from data_span import LOSS_IGNORE_INDEX
 
 
 def token_precision(true_labels, pred_labels, pos_label: int = 1, ignore_label: int = -100):
