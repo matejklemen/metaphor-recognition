@@ -265,12 +265,22 @@ class TransformersTokenDataset(Dataset):
         assert preds.shape[0] == len(self.enc_instances), "Predictions need to be provided for each encoded instance " \
                                                           f"({preds.shape[0]} predictions != {len(self.enc_instances)} encoded instances)"
 
-        # TODO: "any"? If any subword prediction is not 0 -> predict most common of them, else predict 0
         if aggr_strategy == "first":
             aggr_fn = lambda subw_preds: subw_preds[0]
         elif aggr_strategy == "majority":
             # Prediction of word = most common prediction of subwords; tie-break: order of appearance
             aggr_fn = lambda subw_preds: Counter(subw_preds).most_common(n=1)[0][0]
+        elif aggr_strategy == "any":
+            # Prediction of word =
+            #   - if at least one subword is different from C=0, predict most common among those;
+            #   - otherwise, predict 0
+            def aggr_fn(subw_preds):
+                c = Counter(subw_preds)
+                for _pred, _count in c.most_common():
+                    if _pred != FALLBACK_LABEL_INDEX:
+                        return _pred
+
+                return FALLBACK_LABEL_INDEX
         else:
             raise NotImplementedError(aggr_strategy)
 

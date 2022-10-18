@@ -212,3 +212,18 @@ class TestDataSpan(unittest.TestCase):
 		])
 		word_preds = dataset.word_predictions(subw_preds, aggr_strategy="majority")
 		self.assertListEqual(word_preds, [[0, 2, 0, 0, 0, 1, 0, 0, 2]])
+
+		subw_preds = torch.tensor([
+			# ['<s>', ' short', ' sentence', ' the', ' long', 'hest', ' of', '</s>']
+			# Prediction for 'sentence' should be ignored because the sentence is part of the history
+			# Prediction for 'longhest' should be 2; both 1 and 2 are equally frequent, so the earlier prediction should be taken
+			[0, 0, 1, 0, 2, 1, 0, 0],
+			# ['<s>', 'hest', ' of', ' all', ' the', ' sentences', ' in', '</s>']
+			# Prediction of subword 'hest' should be ignored because it is an overlapping part already taken into account
+			[0, 3, 0, 0, 0, 1, 0, 0],
+			# ['<s>', ' sentences', ' in', ' this', ' ex', 'z', 'ample', '</s>']
+			# exzample: 2x pred=0, 1x pred=1 => final_pred = 1
+			[0, 2, 0, 0, 0, 0, 1, 0]
+		])
+		word_preds = dataset.word_predictions(subw_preds, aggr_strategy="any")
+		self.assertListEqual(word_preds, [[0, 2, 0, 0, 0, 1, 0, 0, 1]])
