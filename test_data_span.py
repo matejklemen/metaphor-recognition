@@ -184,3 +184,31 @@ class TestDataSpan(unittest.TestCase):
 		])
 		word_preds = dataset.word_predictions(subw_preds)
 		self.assertListEqual(word_preds, [[0, 1, 0, 0, 0, 1, 0, 0, 0]])
+
+	def test_word_predictions_aggregation(self):
+		""" Test aggregation of subword predictions different from taking the first subword's prediction. """
+		# "longest", "example" are misspelled to test handling of broken up sentences
+		# NOTE: this example depends on the tokenizer == roberta-base
+		input_sent = ["the", "longhest", "of", "all", "the", "sentences", "in", "this", "exzample"]
+		prev_sents = [["short", "sentence"]]
+
+		instance = Instance(input_sent, history_sents=prev_sents)
+		encoded_instances: List[EncodedInstance] = EncodedInstance.from_instance(instance, self.tokenizer,
+																				 type_encoding=self.type_encoding,
+																				 max_length=8, stride=2)
+		dataset = TransformersTokenDataset(encoded_instances)
+
+		subw_preds = torch.tensor([
+			# ['<s>', ' short', ' sentence', ' the', ' long', 'hest', ' of', '</s>']
+			# Prediction for 'sentence' should be ignored because the sentence is part of the history
+			# Prediction for 'longhest' should be 2; both 1 and 2 are equally frequent, so the earlier prediction should be taken
+			[0, 0, 1, 0, 2, 1, 0, 0],
+			# ['<s>', 'hest', ' of', ' all', ' the', ' sentences', ' in', '</s>']
+			# Prediction of subword 'hest' should be ignored because it is an overlapping part already taken into account
+			[0, 3, 0, 0, 0, 1, 0, 0],
+			# ['<s>', ' sentences', ' in', ' this', ' ex', 'z', 'ample', '</s>']
+			# exzample: 2x pred=2, 1x pred=0 => final_pred = 2
+			[0, 2, 0, 0, 0, 2, 2, 0]
+		])
+		word_preds = dataset.word_predictions(subw_preds, aggr_strategy="majority")
+		self.assertListEqual(word_preds, [[0, 2, 0, 0, 0, 1, 0, 0, 2]])

@@ -1,6 +1,7 @@
 import ast
 import itertools
 import logging
+from collections import Counter
 from copy import deepcopy
 from typing import Dict, Optional, List, Union
 
@@ -258,17 +259,28 @@ class TransformersTokenDataset(Dataset):
 
         return TransformersTokenDataset(encoded_instances)
 
-    def word_predictions(self, preds: torch.Tensor, pad: Optional[bool] = False) -> List[List[int]]:
+    def word_predictions(self, preds: torch.Tensor, pad: Optional[bool] = False,
+                         aggr_strategy: Optional[str] = "first") -> List[List[int]]:
         """ Converts potentially broken up and partially repeating (overlapping) predictions to word-level predictions."""
         assert preds.shape[0] == len(self.enc_instances), "Predictions need to be provided for each encoded instance " \
                                                           f"({preds.shape[0]} predictions != {len(self.enc_instances)} encoded instances)"
-        converted_preds: List[List[Optional[int]]] = []
+
+        # TODO: "any"? If any subword prediction is not 0 -> predict most common of them, else predict 0
+        if aggr_strategy == "first":
+            aggr_fn = lambda subw_preds: subw_preds[0]
+        elif aggr_strategy == "majority":
+            # Prediction of word = most common prediction of subwords; tie-break: order of appearance
+            aggr_fn = lambda subw_preds: Counter(subw_preds).most_common(n=1)[0][0]
+        else:
+            raise NotImplementedError(aggr_strategy)
+
+        converted_preds: List[List] = []
         inst2idx: Dict[Instance, int] = {}  # instance (obj) -> position of instance (in `converted_preds`)
         for idx_enc, enc_instance in enumerate(self.enc_instances):
             if enc_instance.instance not in inst2idx:
                 inst2idx[enc_instance.instance] = len(converted_preds)
                 converted_preds.append(
-                    [None for _ in range(len(enc_instance.instance.words))]  # TODO: take only input_indices afterwards
+                    [[] for _ in range(len(enc_instance.instance.words))]
                 )
 
             idx_inst = inst2idx[enc_instance.instance]
@@ -278,17 +290,14 @@ class TransformersTokenDataset(Dataset):
                 if idx_word is None:
                     continue
 
-                # Prediction of first subword is assigned to be the prediction of word
-                # TODO: aggregate all predictions and select most frequent one?
-                if converted_preds[idx_inst][idx_word] is None:
-                    converted_preds[idx_inst][idx_word] = int(pred)
+                converted_preds[idx_inst][idx_word].append(int(pred))
 
         idx2inst: Dict[int, Instance] = {_i: _inst for _inst, _i in inst2idx.items()}
 
         postproc_preds: List[List[int]] = []
-        # Only keep predictions for the input sentence (i.e. drop for history)
+        # Only keep predictions for the input sentence (i.e. drop for history), aggregate subword into word predictions
         for idx_inst, preds in enumerate(converted_preds):
-            input_preds = [preds[_i] for _i in idx2inst[idx_inst].input_indices]
+            input_preds = [aggr_fn(preds[_i]) for _i in idx2inst[idx_inst].input_indices]
             postproc_preds.append(input_preds)
 
         if pad:

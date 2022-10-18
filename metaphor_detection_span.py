@@ -78,6 +78,8 @@ parser.add_argument("--optimize_bin_threshold", action="store_true",
                          "using the best model")
 parser.add_argument("--decision_threshold_bin", type=float, default=None,
                     help="Specify a decision threshold to be used in binary classification of metaphors")
+parser.add_argument("--word_prediction_strategy", type=str, default="first",
+                    choices=["first", "majority"])
 
 parser.add_argument("--wandb_project_name", type=str, default="metaphor-komet-token-span-optimization")
 parser.add_argument("--random_seed", type=int, default=17)
@@ -295,7 +297,8 @@ if __name__ == "__main__":
                         dev_preds_dense.append(_dev_preds)
 
                 dev_preds_dense = torch.cat(dev_preds_dense)
-                dev_preds_word = dev_set.word_predictions(dev_preds_dense, pad=True)
+                dev_preds_word = dev_set.word_predictions(dev_preds_dense, pad=True,
+                                                          aggr_strategy=args.word_prediction_strategy)
 
                 dev_metric = validation_fn(y_true=dev_true_word_padded, y_pred=np.array(dev_preds_word))
                 logging.info(f"\tValidation {args.validation_metric}: {dev_metric:.4f}")
@@ -359,7 +362,8 @@ if __name__ == "__main__":
             best_thresh, metric_with_best_thresh = None, 0.0
             for curr_thresh in thresh_to_check:
                 dev_preds_dense = (dev_probas_dense[:, :, 1] >= curr_thresh).int()
-                dev_preds_word_padded = np.array(dev_set.word_predictions(dev_preds_dense, pad=True))
+                dev_preds_word_padded = np.array(dev_set.word_predictions(dev_preds_dense, pad=True,
+                                                                          aggr_strategy=args.word_prediction_strategy))
                 curr_metric = validation_fn(y_true=dev_true_word_padded, y_pred=dev_preds_word_padded)
                 if curr_metric > metric_with_best_thresh:
                     best_thresh = curr_thresh
@@ -370,10 +374,12 @@ if __name__ == "__main__":
         else:
             dev_preds_dense = torch.argmax(dev_probas_dense, dim=-1)
 
-        dev_preds_word_padded = dev_set.word_predictions(dev_preds_dense, pad=True)
+        dev_preds_word_padded = dev_set.word_predictions(dev_preds_dense, pad=True,
+                                                         aggr_strategy=args.word_prediction_strategy)
         dev_preds_word_unpadded = list(
             map(lambda instance_types: list(map(lambda _idx_type: rev_type_encoding[_idx_type], instance_types)),
-                dev_set.word_predictions(dev_preds_dense, pad=False))
+                dev_set.word_predictions(dev_preds_dense, pad=False,
+                                         aggr_strategy=args.word_prediction_strategy))
         )
 
         dev_true_word_unpadded: List[List[str]] = list(
@@ -453,7 +459,7 @@ if __name__ == "__main__":
 
     test_probas_dense = torch.cat(test_probas_dense)
     # If only running the evaluation part, allow the user to specify a custom decision threshold
-    if best_thresh is None and args.type_scheme == "binary":
+    if best_thresh is None and args.type_scheme == "binary" and args.decision_threshold_bin is not None:
         best_thresh = args.decision_threshold_bin
         logging.info(f"Using manually specified decision threshold T={best_thresh}")
 
@@ -464,10 +470,12 @@ if __name__ == "__main__":
     else:
         test_preds_dense = (test_probas_dense[:, :, 1] >= best_thresh).int()
 
-    test_preds_word_padded = test_set.word_predictions(test_preds_dense, pad=True)
+    test_preds_word_padded = test_set.word_predictions(test_preds_dense, pad=True,
+                                                       aggr_strategy=args.word_prediction_strategy)
     test_preds_word_unpadded = list(
         map(lambda instance_types: list(map(lambda _idx_type: rev_type_encoding[_idx_type], instance_types)),
-            test_set.word_predictions(test_preds_dense, pad=False))
+            test_set.word_predictions(test_preds_dense, pad=False,
+                                      aggr_strategy=args.word_prediction_strategy))
     )
 
     test_true_word_unpadded = list(
