@@ -27,9 +27,9 @@ def data_split(data):
 
 
 parser = argparse.ArgumentParser()
-parser.add_argument("--dataset_handle", type=str, default="cjvt/sloie",
-					choices=["cjvt/komet", "cjvt/gkomet", "cjvt/sloie"])
-parser.add_argument("--dataset_dir", type=str, default="sloie_pseudomet")
+parser.add_argument("--dataset_handle", type=str, default="cjvt/ssj500k",
+					choices=["cjvt/komet", "cjvt/gkomet", "cjvt/sloie", "cjvt/ssj500k"])
+parser.add_argument("--dataset_dir", type=str, default="ssj500k_pseudomet")
 
 
 # TODO: make this script into an universal preprocessor
@@ -37,9 +37,14 @@ if __name__ == "__main__":
 	RAND_SEED = 321
 	args = parser.parse_args()
 	np.random.seed(RAND_SEED)
+
+	datasets_kwargs = {}
+	if args.dataset_handle == "cjvt/ssj500k":
+		datasets_kwargs["name"] = "multiword_expressions"
 	data = datasets.load_dataset(args.dataset_handle)["train"]
 
 	data = data.to_pandas()
+	num_ex = data.shape[0]
 	if args.dataset_handle in {"cjvt/komet", "cjvt/gkomet"}:
 		data["sentence_words"] = data["sentence_words"].apply(lambda _curr_sent: _curr_sent.tolist())
 		data["met_type"] = data["met_type"].apply(
@@ -56,7 +61,6 @@ if __name__ == "__main__":
 		)
 	elif args.dataset_handle == "cjvt/sloie":
 		data = data[["sentence_words", "is_idiom", "expression"]]
-		num_ex = data.shape[0]
 
 		data["sentence_words"] = data["sentence_words"].apply(lambda _curr_sent: _curr_sent.tolist())
 		data["is_idiom"] = data["is_idiom"].apply(lambda npa: npa.tolist())
@@ -79,6 +83,34 @@ if __name__ == "__main__":
 			else:
 				all_met_type.append([])
 				all_met_frame.append([])
+
+		data["met_type"] = all_met_type
+		data["met_frame"] = all_met_frame
+	elif args.dataset_handle == "cjvt/ssj500k":
+		data = data[["id_doc", "id_words", "words", "mwe_info"]]
+		data = data.rename(columns={"words": "sentence_words", "id_doc": "document_name"})
+		data["sentence_words"] = data["sentence_words"].apply(lambda _curr_sent: _curr_sent.tolist())
+		data["mwe_info"] = data["mwe_info"].apply(
+			lambda _met_types: list(map(
+				lambda _curr_type: {_k: _v.tolist() if _k == "word_indices" else _v for _k, _v in _curr_type.items()},
+				_met_types.tolist()
+			))
+		)
+
+		MWE_MAPPING = {"ID": "idiom", "IRV": "inherently-reflexive-verb",
+					   "LVC": "light verb construction", "LVC.full": "light verb construction", "LVC.cause": "light verb construction",
+					   "VPC": "verb-particle-construction", "OTH": "other-verbal-MWE",
+					   "IAV": "inherently-adpositional-verb", "VID": "idiom"}
+		all_met_type, all_met_frame = [], []
+		for idx_ex in range(num_ex):
+			curr_ex = data.iloc[idx_ex]
+			curr_type, curr_frame = [], []
+			for mwe_info in curr_ex["mwe_info"]:
+				curr_type.append({"type": "MRWi", "word_indices": mwe_info["word_indices"]})
+				curr_frame.append({"type": MWE_MAPPING[mwe_info["type"]], "word_indices": mwe_info["word_indices"]})
+
+			all_met_type.append(curr_type)
+			all_met_frame.append(curr_frame)
 
 		data["met_type"] = all_met_type
 		data["met_frame"] = all_met_frame
