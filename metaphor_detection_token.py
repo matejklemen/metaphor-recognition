@@ -14,7 +14,7 @@ import wandb
 from tqdm import trange
 from transformers import AutoTokenizer, AutoModelForTokenClassification
 
-from data_span import TransformersTokenDataset, load_df
+from data import TransformersTokenDataset, load_df
 from utils import token_f1, token_precision, token_recall, visualize_token_predictions
 
 

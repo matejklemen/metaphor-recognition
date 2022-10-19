@@ -5,7 +5,7 @@ import pandas as pd
 import torch
 from transformers import AutoTokenizer
 
-from data_span import Instance, EncodedInstance, create_examples, TransformersTokenDataset
+from data import Instance, EncodedInstance, create_examples, TransformersTokenDataset
 
 
 class TestDataSpan(unittest.TestCase):
