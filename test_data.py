@@ -5,7 +5,8 @@ import pandas as pd
 import torch
 from transformers import AutoTokenizer
 
-from data import Instance, EncodedInstance, create_examples, TransformersTokenDataset
+from data import Instance, EncodedInstance, create_examples, TransformersTokenDataset, EncodedSentenceInstance, \
+	global_word_ids
 
 
 class TestDataSpan(unittest.TestCase):
@@ -227,3 +228,55 @@ class TestDataSpan(unittest.TestCase):
 		])
 		word_preds = dataset.word_predictions(subw_preds, aggr_strategy="any")
 		self.assertListEqual(word_preds, [[0, 2, 0, 0, 0, 1, 0, 0, 1]])
+
+	def test_create_encoded_sentence_instance(self):
+		# "longest", "example" are misspelled to test handling of broken up sentences
+		# NOTE: this example depends on the tokenizer == roberta-base
+		input_sent = ["the", "longhest", "of", "all", "the", "sentences", "in", "this", "exzample"]
+		prev_sents = [["short", "sentence"]]
+		met_type = [{"type": "MRWi", "word_indices": [0, 1]}, {"type": "MRWd", "word_indices": [3, 4, 5]},
+					{"type": "WIDLI", "word_indices": [7, 8]}]
+		met_frame = []
+
+		# Case #1: no history
+		instance = Instance(input_sent, met_type=met_type)
+		# Make sure a warning is displayed because WIDLI is not handled by the provided type encoding
+		with self.assertWarns(Warning):
+			encoded_instance: EncodedSentenceInstance = EncodedSentenceInstance.from_instance(
+				instance, self.tokenizer, type_encoding=self.type_encoding, max_length=8
+			)
+
+		# ['<s>', ' the', ' long', 'hest', ' of', ' all', ' the', '</s>']
+		self.assertEqual(len(encoded_instance.subword2word), 6)
+		# ["the", "longhest", "of", "all", "the"]
+		self.assertEqual(len(encoded_instance.word2subword), 5)
+		# [1x O, 1x MRWi, 1x MRWd]
+		self.assertListEqual(encoded_instance.met_type, [1, 1, 1])
+		# Make sure that the WIDLI metaphor is tracked, but that the subwords are not tracked as it gets truncated
+		self.assertDictEqual(encoded_instance.met_type_metadata[-1],
+							 {"type": 0, "word_indices_instance": [7, 8], "word_indices_input": [7, 8], "subword_indices": None})
+
+		# Case #2: with history
+		instance = Instance(input_sent, history_sents=prev_sents, met_type=met_type)
+		with self.assertWarns(Warning):
+			encoded_instance: EncodedSentenceInstance = EncodedSentenceInstance.from_instance(
+				instance, self.tokenizer, type_encoding=self.type_encoding, max_length=8
+			)
+
+		# ['<s>', ' short', ' sentence', '</s>', '</s>', ' the', ' long', '</s>']
+		self.assertListEqual(encoded_instance.met_type_metadata,
+							 [
+								# Make sure that only the subwords ["the", "long"] are tracked as "hest" gets truncated
+								 {"type": 1, "word_indices_instance": [2, 3], "word_indices_input": [0, 1], "subword_indices": [5, 6]},
+								 {"type": 2, "word_indices_instance": [5, 6, 7], "word_indices_input": [3, 4, 5], "subword_indices": None},
+								 {"type": 0, "word_indices_instance": [9, 10], "word_indices_input": [7, 8], "subword_indices": None}
+							 ])
+
+	def test_global_word_ids(self):
+		# Single sequence where IDs are already global
+		self.assertListEqual(global_word_ids([None, 0, 1, 1, 2, None]),
+							 [None, 0, 1, 1, 2, None])
+
+		# A sequence pair, each with two words
+		self.assertListEqual(global_word_ids([None, 0, 1, None, None, 0, 1, None]),
+							 [None, 0, 1, None, None, 2, 3, None])

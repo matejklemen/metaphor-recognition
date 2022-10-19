@@ -1,9 +1,10 @@
 import ast
 import itertools
 import logging
+import warnings
 from collections import Counter
 from copy import deepcopy
-from typing import Dict, Optional, List, Union
+from typing import Dict, Optional, List, Union, Tuple
 
 import numpy as np
 import pandas as pd
@@ -24,6 +25,28 @@ LOSS_IGNORE_INDEX = -100
 FALLBACK_LABEL_INDEX = 0
 FALLBACK_LABEL = "O"
 PADDING_WORD_IDX = -1
+
+
+def global_word_ids(local_word_ids: List[Union[int, None]]) -> List[Union[int, None]]:
+    """ Postprocess word IDs to be global instead of local to each sequence.
+    It is assumed that there is a separating token in between word IDs of multiple sequences!
+    `local_word_ids` are the typically the word IDs as returned by HuggingFace transformers.
+
+    E.g., turn [None, 0, 1, None, None, 0, 1, None] into [None, 0, 1, None, None, 2, 3, None].
+    """
+    postproc_word_ids = []
+    prev_word_id = -1
+    for _i in range(len(local_word_ids)):
+        if local_word_ids[_i] is None:
+            postproc_word_ids.append(local_word_ids[_i])
+        else:
+            if local_word_ids[_i] == local_word_ids[_i - 1]:
+                postproc_word_ids.append(postproc_word_ids[-1])
+            else:
+                postproc_word_ids.append(prev_word_id + 1)
+                prev_word_id = postproc_word_ids[-1]
+
+    return postproc_word_ids
 
 
 class Instance:
@@ -187,6 +210,118 @@ class EncodedInstance:
             curr_inst.next_sibling = next_inst
 
         return return_instances
+
+
+class EncodedSentenceInstance:
+    def __init__(self, instance,
+                 model_data: Dict,
+                 word2subword: Dict[int, List[int]],
+                 subword2word: Dict[int, int],
+                 type_encoding: Dict[str, int],
+                 enc_met_type: List[int] = None,
+                 enc_met_frame: List[int] = None,
+                 met_type_metadata: List[Dict] = None,
+                 met_frame_metadata: List[Dict] = None):
+        self.instance = instance
+        self.model_data = model_data
+
+        self.subword2word = subword2word
+        self.word2subword = word2subword
+        self.type2id = type_encoding
+        self.met_type = enc_met_type if enc_met_type is not None else []
+        self.met_frame = enc_met_frame if enc_met_frame is not None else []
+
+        self.met_type_metadata = met_type_metadata if met_type_metadata is not None else {}
+        self.met_frame_metadata = met_frame_metadata if met_frame_metadata is not None else {}
+
+        self.next_sibling: Optional[EncodedInstance] = None  # To be set manually afterwards
+
+    @staticmethod
+    def from_instance(instance: Instance, tokenizer: PreTrainedTokenizer,
+                      type_encoding: Dict[str, int], frame_encoding: Optional[Dict[str, int]] = None,
+                      max_length: Optional[int] = 32):
+        has_history = len(instance.history_indices) > 0
+        if has_history:
+            # pair of sequences: (history_sents, input_sent)
+            input_or_input_pair = (
+                [instance.words[_i] for _i in instance.history_indices],
+                [instance.words[_i] for _i in instance.input_indices]
+            )
+        else:
+            # single sequence: input_sent
+            input_or_input_pair = instance.words
+
+        encoded_data = tokenizer.encode_plus(input_or_input_pair, is_split_into_words=True, max_length=max_length,
+                                             padding="max_length", truncation=True, return_tensors="pt",
+                                             return_special_tokens_mask=True)
+
+        subword2word: Dict[int, int] = {}
+        word2subword: Dict[int, List[int]] = {}
+
+        # Contains index of the word a subword belongs to, or None if subword is a special token
+        word_ids: List[Union[int, None]] = encoded_data.word_ids()
+        word_ids = global_word_ids(word_ids)
+
+        # Where does sequence actually start, i.e. after initial special tokens
+        nonspecial_start = 0
+        while word_ids[nonspecial_start] is None:
+            nonspecial_start += 1
+
+        end_w_id = None
+        for idx_subw, w_id in enumerate(word_ids[nonspecial_start:], start=nonspecial_start):
+            if w_id is not None:
+                subword2word[idx_subw] = w_id
+                existing_subw = word2subword.get(w_id, [])
+                existing_subw.append(idx_subw)
+                word2subword[w_id] = existing_subw
+                end_w_id = w_id
+
+        met_type_count = [0 for _ in range(len(type_encoding))]
+        proc_met_types = []
+        for met_info in instance.met_type:
+            met_type_count[type_encoding.get(met_info["type"], type_encoding[FALLBACK_LABEL])] += 1
+            proc_met_info = {"type": type_encoding.get(met_info["type"], type_encoding[FALLBACK_LABEL]),
+                             "word_indices_input": [], "word_indices_instance": [],
+                             "subword_indices": []}
+
+            for idx_word_input, idx_word_instance in zip(met_info["word_indices_input"],
+                                                         met_info["word_indices_instance"]):
+                # For non-truncated words, keep track of their subword indices
+                if idx_word_instance <= end_w_id:
+                    for idx_subw in word2subword[idx_word_instance]:
+                        proc_met_info["subword_indices"].append(idx_subw)
+
+                proc_met_info["word_indices_input"].append(idx_word_input)
+                proc_met_info["word_indices_instance"].append(idx_word_instance)
+
+            # If a metaphor was truncated, we still want to track it, but don't connect it to any subwords
+            if len(proc_met_info["subword_indices"]) == 0:
+                proc_met_info["subword_indices"] = None
+
+            proc_met_types.append(proc_met_info)
+
+        # If no types are annotated or if there are no types, mark it as a non-metaphoric sentence
+        if sum(met_type_count[1:]) == 0:
+            met_type_count[FALLBACK_LABEL_INDEX] = 1
+
+        if met_type_count[FALLBACK_LABEL_INDEX] > 1 or \
+                (met_type_count[FALLBACK_LABEL_INDEX] == 1 and sum(met_type_count[1:]) > 0):
+            warnings.warn("At least one metaphor type could not be encoded with the provided type mapping, so it is "
+                          f"being counted as '{FALLBACK_LABEL}'. To fix this, either remap the type or provide an "
+                          f"additional ID for the type in `type_encoding`.", Warning)
+
+        # TODO: do the same for metaphor frames, below are just sensible defaults
+        # ...
+        met_frame_count = [1]  # sentence with no frames
+        proc_met_frames = []
+
+        # For consistency with EncodedInstance, remove the batch dimension from tensors
+        model_data = {_k: _v[0] for _k, _v in encoded_data.items()}
+        return EncodedSentenceInstance(instance, model_data,
+                                       word2subword=word2subword, subword2word=subword2word,
+                                       type_encoding=type_encoding,
+                                       enc_met_type=met_type_count, enc_met_frame=met_frame_count,
+                                       met_type_metadata=proc_met_types, met_frame_metadata=proc_met_frames)
 
 
 class TransformersTokenDataset(Dataset):
