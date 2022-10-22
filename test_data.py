@@ -6,7 +6,7 @@ import torch
 from transformers import AutoTokenizer
 
 from data import Instance, EncodedInstance, create_examples, TransformersTokenDataset, EncodedSentenceInstance, \
-	global_word_ids
+	global_word_ids, TransformersSentenceDataset
 
 
 class TestDataSpan(unittest.TestCase):
@@ -114,7 +114,7 @@ class TestDataSpan(unittest.TestCase):
 		self.assertEqual(len(created_examples[0].history_indices), 0)  # First sentence has no previous sentence
 		self.assertEqual(len(created_examples[1].history_indices), 2)
 
-	def test_create_dataset_from_dataframe(self):
+	def test_create_token_dataset_from_dataframe(self):
 		# Case #1: no history, no breaking up of examples needed
 		dataset = TransformersTokenDataset.from_dataframe(self.sample_df,
 														  type_encoding=self.type_encoding,
@@ -280,3 +280,24 @@ class TestDataSpan(unittest.TestCase):
 		# A sequence pair, each with two words
 		self.assertListEqual(global_word_ids([None, 0, 1, None, None, 0, 1, None]),
 							 [None, 0, 1, None, None, 2, 3, None])
+
+	def test_create_sentence_dataset_from_dataframe(self):
+		dataset = TransformersSentenceDataset.from_dataframe(self.sample_df,
+															 type_encoding=self.type_encoding,
+															 max_length=32, history_prev_sents=0,
+															 tokenizer_or_tokenizer_name=self.tokenizer)
+
+		self.assertEqual(len(dataset), 4)
+		for attr_name in dataset.model_keys:
+			self.assertListEqual(list(dataset.model_data[attr_name].shape), [4, 32])  # [num_examples, max_length]
+
+		dataset = TransformersSentenceDataset.from_dataframe(self.sample_df,
+															 type_encoding=self.type_encoding,
+															 max_length=32, history_prev_sents=3,
+															 tokenizer_or_tokenizer_name=self.tokenizer)
+
+		self.assertEqual(len(dataset), 4)
+		for attr_name in dataset.model_keys:
+			self.assertListEqual(list(dataset.model_data[attr_name].shape), [4, 32])  # [num_examples, max_length]
+
+

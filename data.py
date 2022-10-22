@@ -453,6 +453,71 @@ class TransformersTokenDataset(Dataset):
         return postproc_preds
 
 
+class TransformersSentenceDataset(Dataset):
+    def __init__(self, encoded_instances: List[EncodedSentenceInstance], **kwargs):
+        self.enc_instances = encoded_instances
+
+        assert len(self.enc_instances) > 0, "Cannot construct dataset without encoded instances"
+        self.model_keys = list(self.enc_instances[0].model_data.keys())
+        self.model_data = {attr: [] for attr in self.model_keys}
+
+        for attr in self.model_keys:
+            for idx_ex in range(len(encoded_instances)):
+                self.model_data[attr].append(encoded_instances[idx_ex].model_data[attr])
+            self.model_data[attr] = torch.stack(self.model_data[attr])
+
+        self.target_names = kwargs.get("target_names", ["met_type", "met_frame"])
+        self.target_data = {
+            target_name: torch.tensor(
+                list(map(lambda _enc_inst: getattr(_enc_inst, target_name), encoded_instances))
+            ) for target_name in self.target_names
+        }
+
+    @property
+    def input_sentences(self):
+        # As opposed to TransformersTokenDataset.input_sentences, each EncodedSentenceInstance contains exactly
+        # one input sentence. Note that these input sentences are not necessarily equal to what the model gets as
+        # input as the sentence may get truncated depending on the provided history sentences and `max_length`
+        sents: List[List[str]] = []
+        for enc in self.enc_instances:
+            sents.append([enc.instance.words[_i] for _i in enc.instance.input_indices])
+
+        return sents
+
+    def __getitem__(self, item):
+        ret_dict = {k: self.model_data[k][item] for k in self.model_keys}
+        ret_dict["indices"] = item
+        return ret_dict
+
+    def targets(self, item):
+        return {target_name: self.target_data[target_name][item] for target_name in self.target_names}
+
+    def __len__(self):
+        return len(self.enc_instances)
+
+    @staticmethod
+    def from_dataframe(dataframe, type_encoding: Dict[str, int], max_length, stride=0, history_prev_sents=0,
+                       tokenizer_or_tokenizer_name: Union[str, AutoTokenizer] = "EMBEDDIA/sloberta",
+                       frame_encoding: Dict[str, int] = None):
+        # TODO: introduce `max_met_length`: padding, truncation of met_type and met_frame (improve training efficiency!)
+        if isinstance(tokenizer_or_tokenizer_name, str):
+            tokenizer = AutoTokenizer.from_pretrained(tokenizer_or_tokenizer_name)
+        else:
+            tokenizer = tokenizer_or_tokenizer_name
+
+        instances = create_examples(dataframe, history_prev_sents=history_prev_sents)
+        encoded_instances = []
+
+        num_ex = len(instances)
+        for idx_ex in range(num_ex):
+            curr_inst = instances[idx_ex]
+            curr_enc_inst = EncodedSentenceInstance.from_instance(curr_inst, tokenizer,
+                                                                  type_encoding=type_encoding,max_length=max_length)
+            encoded_instances.append(curr_enc_inst)
+
+        return TransformersSentenceDataset(encoded_instances)
+
+
 def create_examples(df: pd.DataFrame, history_prev_sents: int = 0) -> List[Instance]:
     assert history_prev_sents >= 0
 
