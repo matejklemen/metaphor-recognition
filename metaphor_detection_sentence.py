@@ -298,7 +298,7 @@ if __name__ == "__main__":
 
         dev_probas = torch.cat(dev_probas)
         if args.optimize_bin_threshold:
-            thresh_to_check = sorted(list(set(list(itertools.chain(*dev_probas[:, 1].tolist())))))
+            thresh_to_check = sorted(list(set(dev_probas[:, 1].tolist())))
             if len(thresh_to_check) > MAX_THRESH_TO_CHECK:
                 step_size = len(thresh_to_check) // MAX_THRESH_TO_CHECK
                 thresh_to_check = thresh_to_check[::step_size][:MAX_THRESH_TO_CHECK]
