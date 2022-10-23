@@ -175,6 +175,8 @@ if __name__ == "__main__":
         train_set.target_data["met_type"] = (train_set.target_data["met_type"][:, 1] > 0).long()
         dev_set.target_data["met_type"] = (dev_set.target_data["met_type"][:, 1] > 0).long()
 
+        logging.info(f"Loaded {len(train_set)} training instances, {len(dev_set)} validation instances")
+
         loss_fn = nn.CrossEntropyLoss()
         validation_fn = lambda y_true, y_pred: 0.0  # placeholder
         if args.validation_metric == "f1_score_binary":
