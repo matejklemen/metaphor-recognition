@@ -208,7 +208,7 @@ if __name__ == "__main__":
 
                     logits = model(**curr_batch_device)["logits"]
 
-                    loss = loss_fn(logits, ground_truth["met_type"])
+                    loss = loss_fn(logits, ground_truth["met_type"].to(DEVICE))
                     train_loss += float(loss.cpu())
                     nb += 1
 
