@@ -410,15 +410,18 @@ if __name__ == "__main__":
         model = AutoModelForTokenClassification.from_pretrained(args.experiment_dir).to(DEVICE)
 
     df_test = load_df(args.test_path)
-    for idx_ex in range(df_test.shape[0]):
-        new_met_type = []
-        for met_info in df_test.iloc[idx_ex]["met_type"]:
-            new_type = MET_TYPE_MAPPING.get(met_info["type"], "O")
-            if new_type != "O":
-                met_info["type"] = new_type
-                new_met_type.append(met_info)
+    has_type = "met_type" in df_test.columns
 
-        df_test.at[idx_ex, "met_type"] = new_met_type
+    if has_type:
+        for idx_ex in range(df_test.shape[0]):
+            new_met_type = []
+            for met_info in df_test.iloc[idx_ex]["met_type"]:
+                new_type = MET_TYPE_MAPPING.get(met_info["type"], "O")
+                if new_type != "O":
+                    met_info["type"] = new_type
+                    new_met_type.append(met_info)
+
+            df_test.at[idx_ex, "met_type"] = new_met_type
 
     test_set = TransformersTokenDataset.from_dataframe(df_test, history_prev_sents=args.history_prev_sents,
                                                        type_encoding=type_encoding, frame_encoding=frame_encoding,
@@ -427,16 +430,17 @@ if __name__ == "__main__":
 
     logging.info(f"Loaded {len(test_set)} test instances")
 
-    test_true_dense = []
-    _test_true = torch.zeros_like(test_set.model_data["input_ids"])  # zeros_like because 0 == fallback index
-    expected_types = test_set.target_data["met_type"]
-    for idx_ex in range(_test_true.shape[0]):
-        for met_info in expected_types[idx_ex]:
-            _test_true[idx_ex, met_info["subword_indices"]] = met_info["type"]
-    test_true_dense.append(_test_true)
-    test_true_dense = torch.cat(test_true_dense)
-    test_true_word_padded: np.ndarray = np.array(test_set.word_predictions(test_true_dense, pad=True))
-    test_true_word_unpadded: List[List[int]] = test_set.word_predictions(test_true_dense, pad=False)
+    if has_type:
+        test_true_dense = []
+        _test_true = torch.zeros_like(test_set.model_data["input_ids"])  # zeros_like because 0 == fallback index
+        expected_types = test_set.target_data["met_type"]
+        for idx_ex in range(_test_true.shape[0]):
+            for met_info in expected_types[idx_ex]:
+                _test_true[idx_ex, met_info["subword_indices"]] = met_info["type"]
+        test_true_dense.append(_test_true)
+        test_true_dense = torch.cat(test_true_dense)
+        test_true_word_padded: np.ndarray = np.array(test_set.word_predictions(test_true_dense, pad=True))
+        test_true_word_unpadded: List[List[int]] = test_set.word_predictions(test_true_dense, pad=False)
 
     # Obtain predictions on TEST set with the best model, save them, visualize them
     with torch.inference_mode():
@@ -479,32 +483,39 @@ if __name__ == "__main__":
                                       aggr_strategy=args.word_prediction_strategy))
     )
 
-    test_true_word_unpadded = list(
-        map(lambda instance_types: list(map(lambda _idx_type: rev_type_encoding[_idx_type], instance_types)),
-            test_true_word_unpadded)
-    )
+    if has_type:
+        test_true_word_unpadded = list(
+            map(lambda instance_types: list(map(lambda _idx_type: rev_type_encoding[_idx_type], instance_types)),
+                test_true_word_unpadded)
+        )
 
-    final_test_p = token_precision(true_labels=test_true_word_padded,
-                                   pred_labels=np.array(test_preds_word_padded))
-    final_test_r = token_recall(true_labels=test_true_word_padded,
-                                pred_labels=np.array(test_preds_word_padded))
-    final_test_f1 = token_f1(true_labels=test_true_word_padded,
-                             pred_labels=np.array(test_preds_word_padded))
-
-    logging.info(f"Test metrics using best model: P = {final_test_p:.4f}, R = {final_test_r:.4f}, F1 = {final_test_f1:.4f}")
-    wandb.log({
-        "test_p": final_test_p,
-        "test_r": final_test_r,
-        "test_f1": final_test_f1
-    })
+        final_test_p = token_precision(true_labels=test_true_word_padded,
+                                       pred_labels=np.array(test_preds_word_padded))
+        final_test_r = token_recall(true_labels=test_true_word_padded,
+                                    pred_labels=np.array(test_preds_word_padded))
+        final_test_f1 = token_f1(true_labels=test_true_word_padded,
+                                 pred_labels=np.array(test_preds_word_padded))
+        logging.info(f"Test metrics using best model: P = {final_test_p:.4f}, R = {final_test_r:.4f}, F1 = {final_test_f1:.4f}")
+        wandb.log({
+            "test_p": final_test_p,
+            "test_r": final_test_r,
+            "test_f1": final_test_f1
+        })
+    else:
+        logging.info("Skipping test set evaluation because no 'met_type' column is provided in the test file")
 
     with open(os.path.join(args.experiment_dir, "pred_visualization_test.html"), "w", encoding="utf-8") as f:
         test_words = test_set.input_sentences
+        if not has_type:
+            test_true_word_unpadded = None
+
         visualization_html = visualize_token_predictions(test_words, test_preds_word_unpadded, test_true_word_unpadded)
         print(visualization_html, file=f)
 
     df_test["preds_transformed"] = test_preds_word_unpadded
-    df_test["true_transformed"] = test_true_word_unpadded
+    if has_type:
+        df_test["true_transformed"] = test_true_word_unpadded
+
     df_test.to_csv(os.path.join(args.experiment_dir, "test_results.tsv"), index=False, sep="\t")
 
     wandb.finish()
