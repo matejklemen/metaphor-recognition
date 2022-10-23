@@ -180,7 +180,7 @@ def visualize_sentence_predictions(sentences, labels_predicted, labels_true=None
 
 		formatted_examples.append("<div class='example-label'>")
 		formatted_examples.append(f"<div class='square' style='border: 2px solid {border_color}; background-color: {bg_color};'{optional_tooltip}></div>")
-		formatted_examples.append(f"<strong>{curr_true}</strong>")
+		formatted_examples.append(f"<strong>y&#770;={curr_pred}</strong>")
 		formatted_examples.append("</div>")
 
 		formatted_examples.append(f"<div class='example-text'>{curr_sent}</div>")
