@@ -4,21 +4,18 @@ import json
 import logging
 import os
 import sys
-from typing import List, Dict
 
 import numpy as np
 import torch
 import torch.nn as nn
 import torch.optim as optim
 from sklearn.metrics import f1_score, precision_score, recall_score
-
-import wandb
 from tqdm import trange
 from transformers import AutoTokenizer, AutoModelForSequenceClassification
 
-from data import TransformersSentenceDataset, load_df, TAG2ID
+import wandb
+from data import TransformersSentenceDataset, load_df
 from utils import visualize_sentence_predictions
-
 
 MAX_THRESH_TO_CHECK = 100
 
@@ -55,7 +52,7 @@ parser.add_argument("--optimize_bin_threshold", action="store_true",
 parser.add_argument("--decision_threshold_bin", type=float, default=None,
                     help="Specify a decision threshold to be used in binary classification of metaphors")
 
-parser.add_argument("--wandb_project_name", type=str, default="metaphor-komet-token-span-optimization")
+parser.add_argument("--wandb_project_name", type=str, default="metaphor-komet-sentence")
 parser.add_argument("--random_seed", type=int, default=17)
 parser.add_argument("--use_cpu", action="store_true")
 
