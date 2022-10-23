@@ -347,21 +347,25 @@ if __name__ == "__main__":
         model = AutoModelForSequenceClassification.from_pretrained(args.experiment_dir).to(DEVICE)
 
     df_test = load_df(args.test_path)
-    for idx_ex in range(df_test.shape[0]):
-        new_met_type = []
-        for met_info in df_test.iloc[idx_ex]["met_type"]:
-            new_type = MET_TYPE_MAPPING.get(met_info["type"], "O")
-            if new_type != "O":
-                met_info["type"] = new_type
-                new_met_type.append(met_info)
+    has_type = "met_type" in df_test.columns
 
-        df_test.at[idx_ex, "met_type"] = new_met_type
+    if has_type:
+        for idx_ex in range(df_test.shape[0]):
+            new_met_type = []
+            for met_info in df_test.iloc[idx_ex]["met_type"]:
+                new_type = MET_TYPE_MAPPING.get(met_info["type"], "O")
+                if new_type != "O":
+                    met_info["type"] = new_type
+                    new_met_type.append(met_info)
+
+            df_test.at[idx_ex, "met_type"] = new_met_type
 
     test_set = TransformersSentenceDataset.from_dataframe(df_test, history_prev_sents=args.history_prev_sents,
                                                           type_encoding=type_encoding, frame_encoding=frame_encoding,
                                                           max_length=args.max_length,
                                                           tokenizer_or_tokenizer_name=tokenizer)
-    test_set.target_data["met_type"] = (test_set.target_data["met_type"][:, 1] > 0).long()
+    if has_type:
+        test_set.target_data["met_type"] = (test_set.target_data["met_type"][:, 1] > 0).long()
 
     logging.info(f"Loaded {len(test_set)} test instances")
 
@@ -398,26 +402,31 @@ if __name__ == "__main__":
     else:
         test_preds = (test_probas[:, 1] >= best_thresh).int()
 
-    final_test_p = precision_score(y_true=test_set.target_data["met_type"].numpy(),
-                                   y_pred=test_preds.numpy())
-    final_test_r = recall_score(y_true=test_set.target_data["met_type"].numpy(),
-                                y_pred=test_preds.numpy())
-    final_test_f1 = f1_score(y_true=test_set.target_data["met_type"].numpy(),
-                             y_pred=test_preds.numpy())
-
-    logging.info(f"Test metrics using best model: P = {final_test_p:.4f}, R = {final_test_r:.4f}, F1 = {final_test_f1:.4f}")
-    wandb.log({
-        "test_p": final_test_p,
-        "test_r": final_test_r,
-        "test_f1": final_test_f1
-    })
+    if has_type:
+        final_test_p = precision_score(y_true=test_set.target_data["met_type"].numpy(),
+                                       y_pred=test_preds.numpy())
+        final_test_r = recall_score(y_true=test_set.target_data["met_type"].numpy(),
+                                    y_pred=test_preds.numpy())
+        final_test_f1 = f1_score(y_true=test_set.target_data["met_type"].numpy(),
+                                 y_pred=test_preds.numpy())
+        logging.info(f"Test metrics using best model: P = {final_test_p:.4f}, R = {final_test_r:.4f}, F1 = {final_test_f1:.4f}")
+        wandb.log({
+            "test_p": final_test_p,
+            "test_r": final_test_r,
+            "test_f1": final_test_f1
+        })
+    else:
+        logging.info("Skipping test set evaluation because no 'met_type' column is provided in the test file")
 
     with open(os.path.join(args.experiment_dir, "pred_visualization_test.html"), "w", encoding="utf-8") as f:
         test_sents = list(map(lambda _sent: " ".join(_sent), test_set.input_sentences))
         test_preds_str = list(map(lambda _curr_pred: rev_type_encoding[_curr_pred],
                                   test_preds.tolist()))
-        test_true_str = list(map(lambda _curr_pred: rev_type_encoding[_curr_pred],
-                                 test_set.target_data["met_type"].tolist()))
+        if has_type:
+            test_true_str = list(map(lambda _curr_pred: rev_type_encoding[_curr_pred],
+                                     test_set.target_data["met_type"].tolist()))
+        else:
+            test_true_str = None
 
         visualization_html = visualize_sentence_predictions(test_sents,
                                                             labels_predicted=test_preds_str,
@@ -425,7 +434,9 @@ if __name__ == "__main__":
         print(visualization_html, file=f)
 
     df_test["preds_transformed"] = test_preds_str
-    df_test["true_transformed"] = test_true_str
+    if has_type:
+        df_test["true_transformed"] = test_true_str
+
     df_test.to_csv(os.path.join(args.experiment_dir, "test_results.tsv"), index=False, sep="\t")
 
     wandb.finish()
