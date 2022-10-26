@@ -33,7 +33,6 @@ parser.add_argument("--dataset_handle", type=str, default="matejklemen/vuamc",
 parser.add_argument("--dataset_dir", type=str, default="vuamc")
 
 
-# TODO: make this script into an universal preprocessor
 if __name__ == "__main__":
 	RAND_SEED = 321
 	# RAND_SEED = 456  # used in vuamc because the initial seed produced an imbalanced split in terms of sentences
@@ -127,6 +126,7 @@ if __name__ == "__main__":
 				_met_types.tolist()
 			))
 		)
+		data["met_frame"] = [[] for _ in range(data.shape[0])]
 
 		for idx_ex in range(data.shape[0]):
 			curr_ex = data.iloc[idx_ex]
