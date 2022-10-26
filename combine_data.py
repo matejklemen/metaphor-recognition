@@ -59,8 +59,9 @@ if __name__ == "__main__":
 
 		df_train1 = pd.read_csv(train_path1, sep="\t")
 		df_train2 = pd.read_csv(train_path2, sep="\t")
+		common_columns = list(set(df_train1.columns) & set(df_train2.columns))
 
-		combined_train = pd.concat((df_train1, df_train2), axis=0).reset_index(drop=True)
+		combined_train = pd.concat((df_train1, df_train2), axis=0)[common_columns].reset_index(drop=True)
 
 		print(f"Combined initial {df_train1.shape[0]} and {df_train2.shape[0]} into "
 			  f"{combined_train.shape[0]} combined training instances\n")
@@ -77,8 +78,9 @@ if __name__ == "__main__":
 
 		df_dev1 = pd.read_csv(dev_path1, sep="\t")
 		df_dev2 = pd.read_csv(dev_path2, sep="\t")
+		common_columns = list(set(df_dev1.columns) & set(df_dev2.columns))
 
-		combined_dev = pd.concat((df_dev1, df_dev2), axis=0).reset_index(drop=True)
+		combined_dev = pd.concat((df_dev1, df_dev2), axis=0)[common_columns].reset_index(drop=True)
 
 		print(f"Combined initial {df_dev1.shape[0]} and {df_dev2.shape[0]} into "
 			  f"{combined_dev.shape[0]} combined dev instances\n")
@@ -95,8 +97,9 @@ if __name__ == "__main__":
 
 		df_test1 = pd.read_csv(os.path.join(args.dir1, test_file1), sep="\t")
 		df_test2 = pd.read_csv(os.path.join(args.dir2, test_file2), sep="\t")
+		common_columns = list(set(df_test1.columns) & set(df_test2.columns))
 
-		combined_test = pd.concat((df_test1, df_test2), axis=0).reset_index(drop=True)
+		combined_test = pd.concat((df_test1, df_test2), axis=0)[common_columns].reset_index(drop=True)
 
 		print(f"Combined initial {df_test1.shape[0]} and {df_test2.shape[0]} into "
 			  f"{combined_test.shape[0]} combined test instances\n")
