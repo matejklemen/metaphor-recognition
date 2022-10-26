@@ -165,7 +165,7 @@ if __name__ == "__main__":
 				data.at[idx_ex, "met_type"] = met_type
 
 			met_type = []
-			for met_info in curr_ex["met_type"]:
+			for met_info in data.iloc[idx_ex]["met_type"]:
 				if met_info["type"] not in UNIFIED_MET_TYPES:
 					continue
 
