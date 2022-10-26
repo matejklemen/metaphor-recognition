@@ -128,6 +128,7 @@ if __name__ == "__main__":
 		)
 		data["met_frame"] = [[] for _ in range(data.shape[0])]
 
+		valid_indices = []
 		for idx_ex in range(data.shape[0]):
 			curr_ex = data.iloc[idx_ex]
 
@@ -155,6 +156,9 @@ if __name__ == "__main__":
 			words, met_type = curr_ex[["sentence_words", "met_type"]].tolist()
 			if len(idx_remap) != len(curr_ex["sentence_words"]):
 				words = list(filter(lambda _word: len(_word) > 0, curr_ex["sentence_words"]))
+				# Skip sentences full of metadata
+				if len(words) == 0:
+					continue
 				met_type = []
 
 				for met_info in curr_ex["met_type"]:
@@ -175,6 +179,9 @@ if __name__ == "__main__":
 				})
 			data.at[idx_ex, "met_type"] = met_type
 			data.at[idx_ex, "sentence_words"] = words
+			valid_indices.append(idx_ex)
+
+		data = data.iloc[valid_indices].reset_index(drop=True)
 
 	train_inds, dev_inds, test_inds = data_split(data)
 	train_data = data.iloc[train_inds]
