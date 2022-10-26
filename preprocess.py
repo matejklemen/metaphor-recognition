@@ -27,14 +27,16 @@ def data_split(data):
 
 
 parser = argparse.ArgumentParser()
-parser.add_argument("--dataset_handle", type=str, default="cjvt/ssj500k",
-					choices=["cjvt/komet", "cjvt/gkomet", "cjvt/sloie", "cjvt/ssj500k"])
-parser.add_argument("--dataset_dir", type=str, default="ssj500k_pseudomet")
+parser.add_argument("--dataset_handle", type=str, default="matejklemen/vuamc",
+					choices=["cjvt/komet", "cjvt/gkomet", "cjvt/sloie", "cjvt/ssj500k",
+							 "matejklemen/vuamc"])
+parser.add_argument("--dataset_dir", type=str, default="vuamc")
 
 
 # TODO: make this script into an universal preprocessor
 if __name__ == "__main__":
 	RAND_SEED = 321
+	# RAND_SEED = 456  # used in vuamc because the initial seed produced an imbalanced split in terms of sentences
 	args = parser.parse_args()
 	np.random.seed(RAND_SEED)
 
@@ -114,6 +116,65 @@ if __name__ == "__main__":
 
 		data["met_type"] = all_met_type
 		data["met_frame"] = all_met_frame
+
+	elif args.dataset_handle == "matejklemen/vuamc":
+		data = data[["document_name", "words", "met_type"]]
+		data = data.rename(columns={"words": "sentence_words"})
+		data["sentence_words"] = data["sentence_words"].apply(lambda _curr_sent: _curr_sent.tolist())
+		data["met_type"] = data["met_type"].apply(
+			lambda _met_types: list(map(
+				lambda _curr_type: {_k: _v.tolist() if _k == "word_indices" else _v for _k, _v in _curr_type.items()},
+				_met_types.tolist()
+			))
+		)
+
+		for idx_ex in range(data.shape[0]):
+			curr_ex = data.iloc[idx_ex]
+
+			idx_remap = {}
+			for idx_word, word in enumerate(curr_ex["sentence_words"]):
+				if len(word) != 0:
+					idx_remap[idx_word] = len(idx_remap)
+
+			# Others will be removed
+			UNIFIED_MET_TYPES = {
+				"mrw/met": "MRWi",
+				"mrw/met/WIDLII": "WIDLI",
+				"mrw/lit": "MRWd",
+				"double": "MRWi",  # Note: could be a MRWd or MRWi, this is just a simplification
+				"mFlag/lex": "MFlag",
+				"mFlag/phrase": "MFlag",
+				"mrw/impl": "MRWimp",
+				"mrw/lit/WIDLII": "WIDLI",
+				"mFlag/morph": "MFlag",
+				"mFlag/lex/WIDLII": "WIDLI",
+				"mFlag/phrase/WIDLII": "WIDLI",
+				"mrw/impl/WIDLII": "WIDLI"
+			}
+
+			words, met_type = curr_ex[["sentence_words", "met_type"]].tolist()
+			if len(idx_remap) != len(curr_ex["sentence_words"]):
+				words = list(filter(lambda _word: len(_word) > 0, curr_ex["sentence_words"]))
+				met_type = []
+
+				for met_info in curr_ex["met_type"]:
+					met_type.append({
+						"type": met_info["type"],
+						"word_indices": list(map(lambda _i: idx_remap[_i], met_info["word_indices"]))
+					})
+				data.at[idx_ex, "met_type"] = met_type
+
+			met_type = []
+			for met_info in curr_ex["met_type"]:
+				if met_info["type"] not in UNIFIED_MET_TYPES:
+					continue
+
+				met_type.append({
+					"type": UNIFIED_MET_TYPES[met_info["type"]],
+					"word_indices": met_info["word_indices"]
+				})
+			data.at[idx_ex, "met_type"] = met_type
+			data.at[idx_ex, "sentence_words"] = words
 
 	train_inds, dev_inds, test_inds = data_split(data)
 	train_data = data.iloc[train_inds]
