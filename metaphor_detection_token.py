@@ -110,9 +110,6 @@ if __name__ == "__main__":
                 setattr(args, k, v)
         args.mode = "eval"
 
-    if args.stride is None:
-        args.stride = args.max_length // 2
-
     if not torch.cuda.is_available() and not args.use_cpu:
         args.use_cpu = True
 
@@ -198,6 +195,9 @@ if __name__ == "__main__":
                                                                          is_split_into_words=True)["input_ids"]])
         max_length = train_lengths[int(0.99 * len(train_lengths))]
         args.max_length = max_length
+
+        if args.stride is None:
+            args.stride = args.max_length // 2
 
         with open(os.path.join(args.experiment_dir, "experiment_config.json"), "w") as f:
             json.dump(vars(args), fp=f, indent=4)
