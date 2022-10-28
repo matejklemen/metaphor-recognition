@@ -49,11 +49,11 @@ parser = argparse.ArgumentParser()
 parser.add_argument("--experiment_dir", type=str, default="debug_span_modeling")
 parser.add_argument("--mode", type=str, choices=["train", "eval"], default="train")
 parser.add_argument("--train_path", type=str,
-                    default="/home/matej/Documents/metaphor-detection/data/komet_hf_format/train_komet_hf_format.tsv")
+                    default="/home/matej/Documents/metaphor-detection/data/komet/train.tsv")
 parser.add_argument("--dev_path", type=str,
-                    default="/home/matej/Documents/metaphor-detection/data/komet_hf_format/dev_komet_hf_format.tsv")
+                    default="/home/matej/Documents/metaphor-detection/data/komet/dev.tsv")
 parser.add_argument("--test_path", type=str,
-                    default="/home/matej/Documents/metaphor-detection/data/komet_hf_format/test_komet_hf_format.tsv")
+                    default="/home/matej/Documents/metaphor-detection/data/komet/test.tsv")
 parser.add_argument("--history_prev_sents", type=int, default=0)
 parser.add_argument("--type_scheme", type=str, default="binary", choices=["binary"])
 parser.add_argument("--mrwi", action="store_true")
@@ -67,7 +67,6 @@ parser.add_argument("--pretrained_name_or_path", type=str, default="EMBEDDIA/slo
 parser.add_argument("--batch_size", type=int, default=16)
 parser.add_argument("--num_epochs", type=int, default=10)
 parser.add_argument("--learning_rate", type=float, default=2e-5)
-parser.add_argument("--max_length", type=int, default=32)
 parser.add_argument("--stride", type=int, default=None)
 parser.add_argument("--validate_every_n_examples", type=int, default=3000)
 parser.add_argument("--early_stopping_rounds", type=int, default=5)
@@ -116,10 +115,6 @@ if __name__ == "__main__":
 
     if not torch.cuda.is_available() and not args.use_cpu:
         args.use_cpu = True
-
-    if args.mode == "train":
-        with open(os.path.join(args.experiment_dir, "experiment_config.json"), "w") as f:
-            json.dump(vars(args), fp=f, indent=4)
 
     if args.random_seed is not None:
         np.random.seed(args.random_seed)
@@ -196,6 +191,16 @@ if __name__ == "__main__":
                     new_met_type.append(met_info)
 
             df_dev.at[idx_ex, "met_type"] = new_met_type
+
+        # Set max_length automatically to 99th percentile of training lengths
+        train_lengths = sorted([len(_curr)
+                                for _curr in tokenizer.batch_encode_plus(df_train["sentence_words"].tolist(),
+                                                                         is_split_into_words=True)["input_ids"]])
+        max_length = train_lengths[int(0.99 * len(train_lengths))]
+        args.max_length = max_length
+
+        with open(os.path.join(args.experiment_dir, "experiment_config.json"), "w") as f:
+            json.dump(vars(args), fp=f, indent=4)
 
         train_set = TransformersTokenDataset.from_dataframe(df_train, history_prev_sents=args.history_prev_sents,
                                                             type_encoding=type_encoding, frame_encoding=frame_encoding,
