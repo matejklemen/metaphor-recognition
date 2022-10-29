@@ -14,7 +14,7 @@ import wandb
 from tqdm import trange
 from transformers import AutoTokenizer, AutoModelForTokenClassification
 
-from data import TransformersTokenDataset, load_df
+from data import TransformersTokenDataset, load_df, create_examples
 from utils import token_f1, token_precision, token_recall, visualize_token_predictions
 
 
@@ -190,8 +190,9 @@ if __name__ == "__main__":
             df_dev.at[idx_ex, "met_type"] = new_met_type
 
         # Set max_length automatically to 99th percentile of training lengths
+        _train_instances = create_examples(df_train, history_prev_sents=args.history_prev_sents)
         train_lengths = sorted([len(_curr)
-                                for _curr in tokenizer.batch_encode_plus(df_train["sentence_words"].tolist(),
+                                for _curr in tokenizer.batch_encode_plus(list(map(lambda _inst: _inst.words, _train_instances)),
                                                                          is_split_into_words=True)["input_ids"]])
         max_length = train_lengths[int(0.99 * len(train_lengths))]
         args.max_length = max_length
