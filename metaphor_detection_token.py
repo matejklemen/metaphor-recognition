@@ -105,6 +105,13 @@ if __name__ == "__main__":
             existing_config = json.load(f)
         logging.info("Loading existing config information from experiment_config.json")
 
+        existing_config.pop("test_path", None)
+        existing_config.pop("pretrained_name_or_path", None)
+        existing_config.pop("batch_size", None)
+
+        if args.decision_threshold_bin is not None:
+            existing_config.pop("decision_threshold_bin", None)
+
         for k, v in existing_config.items():
             if hasattr(args, k):
                 setattr(args, k, v)
