@@ -113,8 +113,7 @@ if __name__ == "__main__":
             existing_config.pop("decision_threshold_bin", None)
 
         for k, v in existing_config.items():
-            if hasattr(args, k):
-                setattr(args, k, v)
+            setattr(args, k, v)
         args.mode = "eval"
 
     if not torch.cuda.is_available() and not args.use_cpu:
