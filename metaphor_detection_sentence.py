@@ -41,7 +41,6 @@ parser.add_argument("--pretrained_name_or_path", type=str, default="EMBEDDIA/slo
 parser.add_argument("--batch_size", type=int, default=16)
 parser.add_argument("--num_epochs", type=int, default=10)
 parser.add_argument("--learning_rate", type=float, default=2e-5)
-parser.add_argument("--max_length", type=int, default=32)
 parser.add_argument("--validate_every_n_examples", type=int, default=3000)
 parser.add_argument("--early_stopping_rounds", type=int, default=5)
 parser.add_argument("--validation_metric", type=str, default="f1_score_binary",
@@ -77,6 +76,13 @@ if __name__ == "__main__":
         with open(os.path.join(args.experiment_dir, "experiment_config.json"), "r") as f:
             existing_config = json.load(f)
         logging.info("Loading existing config information from experiment_config.json")
+
+        existing_config.pop("test_path", None)
+        existing_config.pop("pretrained_name_or_path", None)
+        existing_config.pop("batch_size", None)
+
+        if args.decision_threshold_bin is not None:
+            existing_config.pop("decision_threshold_bin", None)
 
         for k, v in existing_config.items():
             if hasattr(args, k):
