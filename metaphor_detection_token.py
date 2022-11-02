@@ -79,6 +79,7 @@ parser.add_argument("--decision_threshold_bin", type=float, default=None,
                     help="Specify a decision threshold to be used in binary classification of metaphors")
 parser.add_argument("--word_prediction_strategy", type=str, default="first",
                     choices=["first", "majority", "any"])
+parser.add_argument("--tune_last_only", action="store_true")
 
 parser.add_argument("--wandb_project_name", type=str, default="metaphor-komet-token-span-optimization")
 parser.add_argument("--random_seed", type=int, default=17)
@@ -166,6 +167,12 @@ if __name__ == "__main__":
         model = AutoModelForTokenClassification.from_pretrained(
             args.pretrained_name_or_path, num_labels=num_types
         ).to(DEVICE)
+
+        if args.tune_last_only:
+            for name, param in model.named_parameters():
+                if name not in {"classifier.weight", "classifier.bias"}:
+                    param.requires_grad = False
+
         optimizer = optim.AdamW(params=model.parameters(), lr=args.learning_rate)
 
         tokenizer.save_pretrained(args.experiment_dir)
