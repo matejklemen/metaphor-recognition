@@ -14,7 +14,7 @@ from tqdm import trange
 from transformers import AutoTokenizer, AutoModelForSequenceClassification
 
 import wandb
-from data import TransformersSentenceDataset, load_df
+from data import TransformersSentenceDataset, load_df, create_examples
 from utils import visualize_sentence_predictions
 
 MAX_THRESH_TO_CHECK = 100
@@ -85,10 +85,6 @@ if __name__ == "__main__":
 
     if not torch.cuda.is_available() and not args.use_cpu:
         args.use_cpu = True
-
-    if args.mode == "train":
-        with open(os.path.join(args.experiment_dir, "experiment_config.json"), "w") as f:
-            json.dump(vars(args), fp=f, indent=4)
 
     if args.random_seed is not None:
         np.random.seed(args.random_seed)
@@ -168,6 +164,15 @@ if __name__ == "__main__":
                     new_met_type.append(met_info)
 
             df_dev.at[idx_ex, "met_type"] = new_met_type
+
+        # Set max_length automatically to 99th percentile of training lengths
+        _train_instances = create_examples(df_train, history_prev_sents=args.history_prev_sents)
+        train_lengths = sorted([len(_curr)
+                                for _curr in
+                                tokenizer.batch_encode_plus(list(map(lambda _inst: _inst.words, _train_instances)),
+                                                            is_split_into_words=True)["input_ids"]])
+        max_length = train_lengths[int(0.99 * len(train_lengths))]
+        args.max_length = max_length
 
         train_set = TransformersSentenceDataset.from_dataframe(df_train, history_prev_sents=args.history_prev_sents,
                                                                type_encoding=type_encoding, frame_encoding=frame_encoding,
@@ -445,6 +450,10 @@ if __name__ == "__main__":
         df_test["true_transformed"] = test_true_str
 
     df_test.to_csv(os.path.join(args.experiment_dir, "test_results.tsv"), index=False, sep="\t")
+
+    if args.mode == "train":
+        with open(os.path.join(args.experiment_dir, "experiment_config.json"), "w") as f:
+            json.dump(vars(args), fp=f, indent=4)
 
     wandb.finish()
 
