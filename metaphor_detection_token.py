@@ -14,7 +14,7 @@ import wandb
 from tqdm import trange
 from transformers import AutoTokenizer, AutoModelForTokenClassification
 
-from data import TransformersTokenDataset, load_df, create_examples
+from data import TransformersTokenDataset, load_df, create_examples, FALLBACK_LABEL_INDEX
 from utils import token_f1, token_precision, token_recall, visualize_token_predictions
 
 
@@ -40,7 +40,7 @@ def extract_pred_data(pred_probas: torch.Tensor,
     # Negative examples = all other tokens
     pred_logproba = torch.cat((pred_logproba,
                                torch.log(pred_probas[free_tokens_mask])))
-    correct_class.extend([0] * (pred_logproba.shape[0] - len(correct_class)))  # TODO: FALLBACK_IDX?
+    correct_class.extend([FALLBACK_LABEL_INDEX] * (pred_logproba.shape[0] - len(correct_class)))
 
     return pred_logproba, torch.tensor(correct_class)
 
@@ -106,15 +106,18 @@ if __name__ == "__main__":
             existing_config = json.load(f)
         logging.info("Loading existing config information from experiment_config.json")
 
-        existing_config.pop("test_path", None)
-        existing_config.pop("pretrained_name_or_path", None)
-        existing_config.pop("batch_size", None)
-
+        DO_NOT_LOAD = {"test_path", "pretrained_name_or_path", "batch_size"}
         if args.decision_threshold_bin is not None:
-            existing_config.pop("decision_threshold_bin", None)
+            DO_NOT_LOAD.add("decision_threshold_bin")
 
         for k, v in existing_config.items():
-            setattr(args, k, v)
+            if k not in DO_NOT_LOAD:
+                setattr(args, k, v)
+
+        # Just in case, prevent it from being loaded somewhere accidentally
+        delattr(args, "train_path")
+        delattr(args, "dev_path")
+
         args.mode = "eval"
 
     if not torch.cuda.is_available() and not args.use_cpu:
@@ -169,6 +172,7 @@ if __name__ == "__main__":
         ).to(DEVICE)
 
         if args.tune_last_only:
+            logging.info("Freezing all but the last (linear classifier) layer")
             for name, param in model.named_parameters():
                 if name not in {"classifier.weight", "classifier.bias"}:
                     param.requires_grad = False
@@ -212,9 +216,6 @@ if __name__ == "__main__":
 
         if args.stride is None:
             args.stride = args.max_length // 2
-
-        with open(os.path.join(args.experiment_dir, "experiment_config.json"), "w") as f:
-            json.dump(vars(args), fp=f, indent=4)
 
         train_set = TransformersTokenDataset.from_dataframe(df_train, history_prev_sents=args.history_prev_sents,
                                                             type_encoding=type_encoding, frame_encoding=frame_encoding,
@@ -391,6 +392,7 @@ if __name__ == "__main__":
             wandb.log({f"best_dev_{args.validation_metric}": metric_with_best_thresh})
             logging.info(f"[Threshold optimization] Best T={best_thresh}, validation {args.validation_metric} = {metric_with_best_thresh:.4f}")
             dev_preds_dense = (dev_probas_dense[:, :, 1] >= best_thresh).int()
+            args.decision_threshold_bin = best_thresh
         else:
             dev_preds_dense = torch.argmax(dev_probas_dense, dim=-1)
 
@@ -423,6 +425,10 @@ if __name__ == "__main__":
         df_dev["preds_transformed"] = dev_preds_word_unpadded
         df_dev["true_transformed"] = dev_true_word_unpadded
         df_dev.to_csv(os.path.join(args.experiment_dir, "dev_results.tsv"), index=False, sep="\t")
+
+    if args.mode == "train":
+        with open(os.path.join(args.experiment_dir, "experiment_config.json"), "w") as f:
+            json.dump(vars(args), fp=f, indent=4)
 
     if args.mode == "eval":
         tokenizer = AutoTokenizer.from_pretrained(args.experiment_dir)
