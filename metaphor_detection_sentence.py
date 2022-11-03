@@ -77,15 +77,18 @@ if __name__ == "__main__":
             existing_config = json.load(f)
         logging.info("Loading existing config information from experiment_config.json")
 
-        existing_config.pop("test_path", None)
-        existing_config.pop("pretrained_name_or_path", None)
-        existing_config.pop("batch_size", None)
-
+        DO_NOT_LOAD = {"test_path", "pretrained_name_or_path", "batch_size"}
         if args.decision_threshold_bin is not None:
-            existing_config.pop("decision_threshold_bin", None)
+            DO_NOT_LOAD.add("decision_threshold_bin")
 
         for k, v in existing_config.items():
-            setattr(args, k, v)
+            if k not in DO_NOT_LOAD:
+                setattr(args, k, v)
+
+        # Just in case, prevent it from being loaded somewhere accidentally
+        delattr(args, "train_path")
+        delattr(args, "dev_path")
+        
         args.mode = "eval"
 
     if not torch.cuda.is_available() and not args.use_cpu:
@@ -331,6 +334,7 @@ if __name__ == "__main__":
             wandb.log({f"best_dev_{args.validation_metric}": metric_with_best_thresh})
             logging.info(f"[Threshold optimization] Best T={best_thresh}, validation {args.validation_metric} = {metric_with_best_thresh:.4f}")
             dev_preds = (dev_probas[:, 1] >= best_thresh).int()
+            args.decision_threshold_bin = best_thresh
         else:
             dev_preds = torch.argmax(dev_probas, dim=-1)
 
@@ -358,6 +362,10 @@ if __name__ == "__main__":
         df_dev["preds_transformed"] = dev_preds_str
         df_dev["true_transformed"] = dev_true_str
         df_dev.to_csv(os.path.join(args.experiment_dir, "dev_results.tsv"), index=False, sep="\t")
+
+    if args.mode == "train":
+        with open(os.path.join(args.experiment_dir, "experiment_config.json"), "w") as f:
+            json.dump(vars(args), fp=f, indent=4)
 
     if args.mode == "eval":
         tokenizer = AutoTokenizer.from_pretrained(args.experiment_dir)
@@ -455,10 +463,6 @@ if __name__ == "__main__":
         df_test["true_transformed"] = test_true_str
 
     df_test.to_csv(os.path.join(args.experiment_dir, "test_results.tsv"), index=False, sep="\t")
-
-    if args.mode == "train":
-        with open(os.path.join(args.experiment_dir, "experiment_config.json"), "w") as f:
-            json.dump(vars(args), fp=f, indent=4)
 
     wandb.finish()
 
