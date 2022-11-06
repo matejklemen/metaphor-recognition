@@ -77,7 +77,7 @@ if __name__ == "__main__":
             existing_config = json.load(f)
         logging.info("Loading existing config information from experiment_config.json")
 
-        DO_NOT_LOAD = {"test_path", "pretrained_name_or_path", "batch_size"}
+        DO_NOT_LOAD = {"test_path", "pretrained_name_or_path", "batch_size", "use_cpu"}
         if args.decision_threshold_bin is not None:
             DO_NOT_LOAD.add("decision_threshold_bin")
 
