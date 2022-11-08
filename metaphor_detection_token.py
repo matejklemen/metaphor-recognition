@@ -14,6 +14,7 @@ import wandb
 from tqdm import trange
 from transformers import AutoTokenizer, AutoModelForTokenClassification
 
+from custom_modules import TokenClassifierWithLayerCombination
 from data import TransformersTokenDataset, load_df, create_examples, FALLBACK_LABEL_INDEX
 from utils import token_f1, token_precision, token_recall, visualize_token_predictions
 
@@ -79,6 +80,7 @@ parser.add_argument("--decision_threshold_bin", type=float, default=None,
                     help="Specify a decision threshold to be used in binary classification of metaphors")
 parser.add_argument("--word_prediction_strategy", type=str, default="first",
                     choices=["first", "majority", "any"])
+parser.add_argument("--layer_combination", action="store_true")
 parser.add_argument("--tune_last_only", action="store_true")
 
 parser.add_argument("--wandb_project_name", type=str, default="metaphor-komet-token-span-optimization")
@@ -163,15 +165,18 @@ if __name__ == "__main__":
     frame_encoding = None  # TODO: implement me
 
     wandb.init(project=args.wandb_project_name, config=vars(args))
+    model_class = TokenClassifierWithLayerCombination if args.layer_combination else AutoModelForTokenClassification
 
     best_thresh = None
     if args.mode == "train":
         tokenizer = AutoTokenizer.from_pretrained(args.pretrained_name_or_path)
-        model = AutoModelForTokenClassification.from_pretrained(
-            args.pretrained_name_or_path, num_labels=num_types
-        ).to(DEVICE)
+        model = model_class.from_pretrained(args.pretrained_name_or_path, num_labels=num_types)
+        model = model.to(DEVICE)
 
         if args.tune_last_only:
+            assert not args.layer_combination, \
+                "--tune_last_only is unimplemented for case where --layer_combination is set"
+
             logging.info("Freezing all but the last (linear classifier) layer")
             for name, param in model.named_parameters():
                 if name not in {"classifier.weight", "classifier.bias"}:
@@ -344,7 +349,11 @@ if __name__ == "__main__":
         logging.info(f"Best validation {args.validation_metric}: {best_dev_metric:.4f}")
 
         logging.info("Reloading best model for evaluation...")
-        model = AutoModelForTokenClassification.from_pretrained(args.experiment_dir).to(DEVICE)
+        model = model_class.from_pretrained(args.experiment_dir).to(DEVICE)
+
+        if args.layer_combination:
+            logging.info(f"Layer combination parameters:")
+            logging.info(model.layer_combination.data.cpu().flatten())
 
         # Obtain predictions on validation set with the best model, save them, visualize them
         with torch.inference_mode():
@@ -432,7 +441,7 @@ if __name__ == "__main__":
 
     if args.mode == "eval":
         tokenizer = AutoTokenizer.from_pretrained(args.experiment_dir)
-        model = AutoModelForTokenClassification.from_pretrained(args.experiment_dir).to(DEVICE)
+        model = model_class.from_pretrained(args.experiment_dir).to(DEVICE)
 
     df_test = load_df(args.test_path)
     has_type = "met_type" in df_test.columns
