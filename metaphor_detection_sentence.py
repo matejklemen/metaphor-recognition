@@ -351,7 +351,7 @@ if __name__ == "__main__":
             dev_sents = list(map(lambda _sent: " ".join(_sent), dev_set.input_sentences))
             dev_preds_str = list(map(lambda _curr_pred: rev_type_encoding[_curr_pred],
                                      dev_preds.tolist()))
-            dev_true_str = list(map(lambda _curr_pred: rev_type_encoding[_curr_pred],
+            dev_true_str = list(map(lambda _curr_true: rev_type_encoding[_curr_true],
                                     dev_set.target_data["met_type"].tolist()))
 
             visualization_html = visualize_sentence_predictions(dev_sents,
