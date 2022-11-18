@@ -19,7 +19,7 @@ parser = argparse.ArgumentParser()
 parser.add_argument("--experiment_dir", type=str, default="debug_sent_modeling")
 parser.add_argument("--data_path", type=str, default="data/komet-sent-traindev/dev.tsv")
 
-parser.add_argument("--pretrained_name_or_path", type=str, default="debug_sent_modeling")
+parser.add_argument("--pretrained_name_or_path", type=str, default="EMBEDDIA/sloberta")
 parser.add_argument("--batch_size", type=int, default=16)
 parser.add_argument("--decision_threshold_bin", type=float, default=None,
                     help="Specify a decision threshold to be used in binary classification of metaphors")
