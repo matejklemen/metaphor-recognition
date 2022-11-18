@@ -196,10 +196,8 @@ if __name__ == "__main__":
 
         # Threshold-F1 curve: useful when evaluating model on a validation set
         thresh_to_check = sorted(list(set(mean_probas[:, 1].tolist())))
-        # If there are too many unique thresholds, subsample them uniformly across the whole range
-        if len(thresh_to_check) > MAX_THRESH_TO_CHECK:
-            step_size = len(thresh_to_check) // MAX_THRESH_TO_CHECK
-            thresh_to_check = thresh_to_check[::step_size][:MAX_THRESH_TO_CHECK]
+        thresh_to_check = np.percentile(thresh_to_check, q=list(range(MAX_THRESH_TO_CHECK + 1)),
+                                        method="closest_observation").tolist()
 
         # Holds (<thresh>, P, R, F1) for each threshold
         thresh_stats = []
