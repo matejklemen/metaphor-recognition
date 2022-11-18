@@ -132,6 +132,8 @@ if __name__ == "__main__":
                                                           max_length=args.max_length,
                                                           tokenizer_or_tokenizer_name=tokenizer)
     logging.info(f"Loaded {len(test_set)} test instances")
+    if has_type:
+        test_set.target_data["met_type"] = (test_set.target_data["met_type"][:, 1] > 0).long()
 
     num_rounds = int(args.mcd_rounds) if args.mcd_rounds is not None else 1
     # Obtain predictions on TEST set with the best model, save them, visualize them
