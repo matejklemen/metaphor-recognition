@@ -196,7 +196,7 @@ if __name__ == "__main__":
 
         # Threshold-F1 curve: useful when evaluating model on a validation set
         thresh_to_check = sorted(list(set(mean_probas[:, 1].tolist())))
-        thresh_to_check = np.percentile(thresh_to_check, q=list(range(MAX_THRESH_TO_CHECK + 1)),
+        thresh_to_check = np.percentile(thresh_to_check, q=list(range(1, 100)),
                                         method="closest_observation").tolist()
 
         # Holds (<thresh>, P, R, F1) for each threshold
@@ -213,7 +213,7 @@ if __name__ == "__main__":
         thresh_stats = sorted(thresh_stats, key=lambda curr_stats: curr_stats[0])
         plt.title("F1 score at different thresholds")
         plt.plot(thresh_stats, list(map(lambda curr_stats: curr_stats[3], thresh_stats)), color="blue",
-                 linestyle="--")
+                 linestyle="None")
         plt.xlim([0.0, 1.0 + 0.01])
         plt.ylim([0.0, 1.0 + 0.01])
         plt.xlabel("Threshold")

@@ -286,7 +286,7 @@ if __name__ == "__main__":
     if args.optimize_bin_threshold:
         logging.info("Performing threshold optimization...")
         thresh_to_check = sorted(list(set(dev_probas[:, 1].tolist())))
-        thresh_to_check = np.percentile(thresh_to_check, q=list(range(MAX_THRESH_TO_CHECK + 1)),
+        thresh_to_check = np.percentile(thresh_to_check, q=list(range(1, 100)),
                                         method="closest_observation").tolist()
 
         # Holds (<thresh>, P, R, F1) for each threshold
