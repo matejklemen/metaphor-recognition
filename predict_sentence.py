@@ -182,6 +182,14 @@ if __name__ == "__main__":
         test_preds = torch.argmax(mean_probas, dim=-1)
 
     if has_type:
+        import matplotlib.pyplot as plt
+        from sklearn.metrics import PrecisionRecallDisplay
+        PrecisionRecallDisplay.from_predictions(y_true=test_set.target_data["met_type"].numpy(),
+                                                y_pred=mean_probas[:, 1].numpy(),
+                                                pos_label=1,
+                                                name=args.pretrained_name_or_path)
+        plt.savefig(os.path.join(args.experiment_dir, "pr_curve.png"))
+
         final_test_p = precision_score(y_true=test_set.target_data["met_type"].numpy(),
                                        y_pred=test_preds.numpy())
         final_test_r = recall_score(y_true=test_set.target_data["met_type"].numpy(),
