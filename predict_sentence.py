@@ -204,13 +204,13 @@ if __name__ == "__main__":
         # Holds (<thresh>, P, R, F1) for each threshold
         thresh_stats = []
         for curr_thresh in thresh_to_check:
-            np_dev_preds = (mean_probas[:, 1] >= curr_thresh).int().numpy()
-            np_dev_true = test_set.target_data["met_type"].numpy()
+            np_test_preds = (mean_probas[:, 1] >= curr_thresh).int().numpy()
+            np_test_true = test_set.target_data["met_type"].numpy()
 
             thresh_stats.append((curr_thresh,
-                                 precision_score(y_true=np_dev_true, y_pred=np_dev_preds),
-                                 recall_score(y_true=np_dev_true, y_pred=np_dev_preds),
-                                 f1_score(y_true=np_dev_true, y_pred=np_dev_preds)))
+                                 precision_score(y_true=np_test_true, y_pred=np_test_preds),
+                                 recall_score(y_true=np_test_true, y_pred=np_test_preds),
+                                 f1_score(y_true=np_test_true, y_pred=np_test_preds)))
 
         thresh_stats = sorted(thresh_stats, key=lambda curr_stats: curr_stats[0])
         plt.title("F1 score at different thresholds")
