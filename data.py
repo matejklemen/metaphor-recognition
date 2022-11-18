@@ -345,6 +345,9 @@ class TransformersTokenDataset(Dataset):
             self.target_data[target_name] = list(map(lambda _enc_inst: getattr(_enc_inst, target_name),
                                                      encoded_instances))
 
+        # Represents the alignment of encoded instances to an external data source (e.g., a dataframe)
+        self.alignment_indices = None
+
     @property
     def input_sentences(self):
         seen_instances = set()
@@ -382,7 +385,7 @@ class TransformersTokenDataset(Dataset):
         else:
             tokenizer = tokenizer_or_tokenizer_name
 
-        instances = create_examples(dataframe, history_prev_sents=history_prev_sents)
+        alignment_inds, instances = create_examples(dataframe, history_prev_sents=history_prev_sents)
         encoded_instances = []
 
         num_ex = len(instances)
@@ -392,7 +395,9 @@ class TransformersTokenDataset(Dataset):
                                                            max_length=max_length, stride=stride)
             encoded_instances.extend(curr_enc_insts)
 
-        return TransformersTokenDataset(encoded_instances)
+        dataset = TransformersTokenDataset(encoded_instances)
+        dataset.alignment_indices = alignment_inds
+        return dataset
 
     def word_predictions(self, preds: torch.Tensor, pad: Optional[bool] = False,
                          aggr_strategy: Optional[str] = "first") -> List[List[int]]:
@@ -473,6 +478,9 @@ class TransformersSentenceDataset(Dataset):
             ) for target_name in self.target_names
         }
 
+        # Represents the alignment of encoded instances to an external data source (e.g., a dataframe)
+        self.alignment_indices = None
+
     @property
     def input_sentences(self):
         # As opposed to TransformersTokenDataset.input_sentences, each EncodedSentenceInstance contains exactly
@@ -505,7 +513,7 @@ class TransformersSentenceDataset(Dataset):
         else:
             tokenizer = tokenizer_or_tokenizer_name
 
-        instances = create_examples(dataframe, history_prev_sents=history_prev_sents)
+        alignment_inds, instances = create_examples(dataframe, history_prev_sents=history_prev_sents)
         encoded_instances = []
 
         num_ex = len(instances)
@@ -515,18 +523,22 @@ class TransformersSentenceDataset(Dataset):
                                                                   type_encoding=type_encoding,max_length=max_length)
             encoded_instances.append(curr_enc_inst)
 
-        return TransformersSentenceDataset(encoded_instances)
+        dataset = TransformersSentenceDataset(encoded_instances)
+        dataset.alignment_indices = alignment_inds
+        return dataset
 
 
-def create_examples(df: pd.DataFrame, history_prev_sents: int = 0) -> List[Instance]:
+def create_examples(df: pd.DataFrame, history_prev_sents: int = 0) -> Tuple[List[int], List[Instance]]:
     assert history_prev_sents >= 0
 
     instances, encoded_instances = [], []
     has_types = "met_type" in df.columns
     has_frames = "met_frame" in df.columns
     has_sentence_indices = "idx" in df.columns
+    alignment_indices = []
 
     for curr_doc, curr_df in df.groupby("document_name"):
+        alignment_indices.append(curr_df.index.tolist())
         if has_sentence_indices:
             sorted_order = np.argsort(curr_df["idx"].values)
         else:
@@ -547,7 +559,7 @@ def create_examples(df: pd.DataFrame, history_prev_sents: int = 0) -> List[Insta
                                       met_frame=curr_row["met_frame"] if has_frames else None,
                                       history_sents=history_context))
 
-    return instances
+    return list(itertools.chain(*alignment_indices)), instances
 
 
 def data_split(data):

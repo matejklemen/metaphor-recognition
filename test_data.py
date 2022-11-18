@@ -102,14 +102,14 @@ class TestDataSpan(unittest.TestCase):
 							 [{"type": 0, "word_indices_input": [8], "word_indices_instance": [10], "subword_indices": [2]}])
 
 	def test_create_examples(self):
-		created_examples = create_examples(self.sample_df, history_prev_sents=0)
+		_, created_examples = create_examples(self.sample_df, history_prev_sents=0)
 		self.assertEqual(len(created_examples), 4)
 
 		for created_inst in created_examples:
 			self.assertEqual(len(created_inst.history_indices), 0)  # No previous sentences
 			self.assertEqual(len(set(created_inst.sent_indices)), 1)  # All part of the same sentence
 
-		created_examples = create_examples(self.sample_df, history_prev_sents=1)
+		_, created_examples = create_examples(self.sample_df, history_prev_sents=1)
 		self.assertEqual(len(created_examples), 4)
 		self.assertEqual(len(created_examples[0].history_indices), 0)  # First sentence has no previous sentence
 		self.assertEqual(len(created_examples[1].history_indices), 2)
