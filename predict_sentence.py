@@ -15,6 +15,8 @@ from transformers import AutoTokenizer, AutoModelForSequenceClassification
 from data import load_df, TransformersSentenceDataset
 from utils import visualize_sentence_predictions
 
+MAX_THRESH_TO_CHECK = 100
+
 parser = argparse.ArgumentParser()
 parser.add_argument("--experiment_dir", type=str, default="debug_sent_modeling")
 parser.add_argument("--data_path", type=str, default="data/komet-sent-traindev/dev.tsv")
@@ -182,6 +184,7 @@ if __name__ == "__main__":
         test_preds = torch.argmax(mean_probas, dim=-1)
 
     if has_type:
+        # Precision-recall curve
         import matplotlib.pyplot as plt
         from sklearn.metrics import PrecisionRecallDisplay
         PrecisionRecallDisplay.from_predictions(y_true=test_set.target_data["met_type"].numpy(),
@@ -189,6 +192,50 @@ if __name__ == "__main__":
                                                 pos_label=1,
                                                 name=args.pretrained_name_or_path)
         plt.savefig(os.path.join(args.experiment_dir, "pr_curve.png"))
+        plt.clf()
+
+        # Threshold-F1 curve: useful when evaluating model on a validation set
+        thresh_to_check = sorted(list(set(mean_probas[:, 1].tolist())))
+        # If there are too many unique thresholds, subsample them uniformly across the whole range
+        if len(thresh_to_check) > MAX_THRESH_TO_CHECK:
+            step_size = len(thresh_to_check) // MAX_THRESH_TO_CHECK
+            thresh_to_check = thresh_to_check[::step_size][:MAX_THRESH_TO_CHECK]
+
+        # Holds (<thresh>, P, R, F1) for each threshold
+        thresh_stats = []
+        for curr_thresh in thresh_to_check:
+            np_dev_preds = (mean_probas[:, 1] >= curr_thresh).int().numpy()
+            np_dev_true = test_set.target_data["met_type"].numpy()
+
+            thresh_stats.append((curr_thresh,
+                                 precision_score(y_true=np_dev_true, y_pred=np_dev_preds),
+                                 recall_score(y_true=np_dev_true, y_pred=np_dev_preds),
+                                 f1_score(y_true=np_dev_true, y_pred=np_dev_preds)))
+
+        thresh_stats = sorted(thresh_stats, key=lambda curr_stats: curr_stats[0])
+        plt.title("F1 score at different thresholds")
+        plt.plot(thresh_stats, list(map(lambda curr_stats: curr_stats[3], thresh_stats)), color="blue",
+                 linestyle="--")
+        plt.xlim([0.0, 1.0 + 0.01])
+        plt.ylim([0.0, 1.0 + 0.01])
+        plt.xlabel("Threshold")
+        plt.ylabel("F1")
+        plt.savefig(os.path.join(args.experiment_dir, "f1_curve.png"))
+
+        logging.info("**********************")
+        prec_sorted_stats = sorted(thresh_stats, key=lambda curr_stats: (curr_stats[1], curr_stats[2]))
+        _T, _P, _R, _F1 = prec_sorted_stats[-1]
+        logging.info(f"[Maximize precision] T = {_T}, validation P = {_P:.4f}, R = {_R:.4f}, F1 = {_F1:.4f}")
+
+        rec_sorted_stats = sorted(thresh_stats, key=lambda curr_stats: (curr_stats[2], curr_stats[1]))
+        _T, _P, _R, _F1 = rec_sorted_stats[-1]
+        logging.info(f"[Maximize recall] T = {_T}, validation P = {_P:.4f}, R = {_R:.4f}, F1 = {_F1:.4f}")
+
+        f1_sorted_stats = sorted(thresh_stats, key=lambda curr_stats: (curr_stats[3], curr_stats[0]))
+        _T, _P, _R, _F1 = f1_sorted_stats[-1]
+        logging.info(f"[Maximize F1] T = {_T}, validation P = {_P:.4f}, R = {_R:.4f}, F1 = {_F1:.4f}")
+        logging.info("IMPORTANT: This maximization is not automatically taken into account in the final test metrics")
+        logging.info("**********************")
 
         final_test_p = precision_score(y_true=test_set.target_data["met_type"].numpy(),
                                        y_pred=test_preds.numpy())
@@ -196,7 +243,7 @@ if __name__ == "__main__":
                                     y_pred=test_preds.numpy())
         final_test_f1 = f1_score(y_true=test_set.target_data["met_type"].numpy(),
                                  y_pred=test_preds.numpy())
-        logging.info(f"Test metrics using best model: "
+        logging.info(f"Test metrics using model: "
                      f"P = {final_test_p:.4f}, R = {final_test_r:.4f}, F1 = {final_test_f1:.4f}")
     else:
         logging.info("Skipping test set evaluation because no 'met_type' column is provided in the test file")
