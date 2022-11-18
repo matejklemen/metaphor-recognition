@@ -169,8 +169,8 @@ if __name__ == "__main__":
         else:
             sd_probas = torch.std(test_probas, dim=0)
 
-        df_test["mean_proba"] = mean_probas.tolist()
-        df_test["sd_proba"] = sd_probas.tolist()
+        df_test["mean_proba"] = mean_probas[test_set.alignment_indices].tolist()
+        df_test["sd_proba"] = sd_probas[test_set.alignment_indices].tolist()
 
     if args.decision_threshold_bin is not None:
         logging.info(f"Using manually specified decision threshold T={args.decision_threshold_bin}")
