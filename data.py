@@ -4,6 +4,7 @@ import warnings
 from collections import Counter
 from typing import Dict, Optional, List, Union, Tuple
 
+import numpy as np
 import pandas as pd
 import torch
 from torch.utils.data import Dataset
@@ -596,8 +597,6 @@ def load_df(file_path) -> pd.DataFrame:
 
 
 if __name__ == "__main__":
-    from transformers import AutoTokenizer
-
     # from data import load_df
     # df = load_df("/home/matej/Documents/metaphor-detection/data/komet_hf_format/train_komet_hf_format.tsv")
     # data = TransformersTokenDataset.from_dataframe(df, type_encoding=TAG2ID["independent"],
@@ -605,7 +604,6 @@ if __name__ == "__main__":
     #                                                tokenizer_or_tokenizer_name="EMBEDDIA/sloberta")
 
     import datasets
-    import numpy as np
     np.random.seed(321)
     data = datasets.load_dataset("cjvt/komet")["train"]
 
