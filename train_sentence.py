@@ -13,7 +13,7 @@ from tqdm import trange
 from transformers import AutoTokenizer, AutoModelForSequenceClassification
 
 from data import load_df, create_examples, TransformersSentenceDataset
-from utils import visualize_sentence_predictions
+from utils import visualize_predictions
 
 MAX_THRESH_TO_CHECK = 100
 
@@ -332,7 +332,7 @@ if __name__ == "__main__":
     logging.info(f"Dev metrics using best model: P = {final_dev_p:.4f}, R = {final_dev_r:.4f}, F1 = {final_dev_f1:.4f}")
 
     with open(os.path.join(args.experiment_dir, "pred_visualization.html"), "w", encoding="utf-8") as f:
-        dev_sents = list(map(lambda _sent: " ".join(_sent), dev_set.input_sentences))
+        dev_sents = dev_set.input_sentences
         dev_preds_str = list(map(lambda _curr_pred: rev_type_encoding[_curr_pred], dev_preds.tolist()))
         dev_true_str = list(map(lambda _curr_pred: rev_type_encoding[_curr_pred],
                                 dev_set.target_data["met_type"].tolist()))
@@ -342,9 +342,9 @@ if __name__ == "__main__":
         dev_preds_str = [dev_preds_str[_i] for _i in dev_set.alignment_indices]
         dev_true_str = [dev_true_str[_i] for _i in dev_set.alignment_indices]
 
-        visualization_html = visualize_sentence_predictions(dev_sents,
-                                                            labels_predicted=dev_preds_str,
-                                                            labels_true=dev_true_str)
+        visualization_html = visualize_predictions(dev_sents,
+                                                   ysent_pred=dev_preds_str,
+                                                   ysent_true=dev_true_str)
         print(visualization_html, file=f)
 
     df_dev["preds_transformed"] = dev_preds_str

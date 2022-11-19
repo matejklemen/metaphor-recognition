@@ -13,7 +13,7 @@ from tqdm import trange
 from transformers import AutoTokenizer, AutoModelForSequenceClassification
 
 from data import load_df, TransformersSentenceDataset
-from utils import visualize_sentence_predictions
+from utils import visualize_predictions
 
 MAX_THRESH_TO_CHECK = 100
 
@@ -247,8 +247,7 @@ if __name__ == "__main__":
         logging.info("Skipping test set evaluation because no 'met_type' column is provided in the test file")
 
     with open(os.path.join(args.experiment_dir, "pred_visualization_test.html"), "w", encoding="utf-8") as f:
-        test_sents = list(map(lambda _sent: " ".join(_sent),
-                              test_set.input_sentences))
+        test_sents = test_set.input_sentences
         test_preds_str = list(map(lambda _curr_pred: rev_type_encoding[_curr_pred],
                                   test_preds.tolist()))
         if has_type:
@@ -262,9 +261,9 @@ if __name__ == "__main__":
         test_sents = [test_sents[_i] for _i in test_set.alignment_indices]
         test_preds_str = [test_preds_str[_i] for _i in test_set.alignment_indices]
 
-        visualization_html = visualize_sentence_predictions(test_sents,
-                                                            labels_predicted=test_preds_str,
-                                                            labels_true=test_true_str)
+        visualization_html = visualize_predictions(test_sents,
+                                                   ysent_pred=test_preds_str,
+                                                   ysent_true=test_true_str)
         print(visualization_html, file=f)
 
     df_test["preds_transformed"] = test_preds_str

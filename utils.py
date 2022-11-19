@@ -1,8 +1,8 @@
+from copy import deepcopy
+
 import torch
 from sklearn.metrics import precision_score, recall_score, f1_score, \
 	average_precision_score, precision_recall_curve
-
-from data import LOSS_IGNORE_INDEX
 
 
 def token_precision(true_labels, pred_labels, pos_label: int = 1, ignore_label: int = -100):
@@ -109,81 +109,87 @@ VIS_BOILERPLATE = \
 """
 
 
-def visualize_token_predictions(tokens, token_predicted, token_true=None, uninteresting_labels=None):
-	eff_true = token_true
-	if token_true is None:
-		eff_true = [None for _ in range(len(token_predicted))]
-	assert len(token_predicted) == len(eff_true) == len(tokens)
-	eff_uninteresting = set(uninteresting_labels) if uninteresting_labels is not None else {"O", "not_metaphor"}
+def visualize_predictions(sentences,
+						  ysent_pred=None, ysent_true=None,
+						  ytoken_pred=None, ytoken_true=None):
+	visualize_sent = ysent_pred is not None
+	visualize_tok = ytoken_pred is not None
+	assert visualize_sent or visualize_tok, f"Either sentence-level or token-level predictions (or both) must be provided"
+	num_ex = len(sentences)
+
+	eff_ysent_true = ysent_true
+	if ysent_true is None:
+		eff_ysent_true = [None for _ in range(num_ex)]
+
+	eff_ytoken_true = ytoken_true
+	if ytoken_true is None:
+		eff_ytoken_true = [None for _ in range(num_ex)]
+
+	eff_ysent_pred = ysent_pred
+	if ysent_pred is None:
+		eff_ysent_pred = [None for _ in range(num_ex)]
+
+	eff_ytoken_pred = ytoken_pred
+	if ytoken_pred is None:
+		eff_ytoken_pred = [None for _ in range(num_ex)]
+
+	assert len(eff_ysent_true) == len(eff_ytoken_true) == len(eff_ysent_pred) == len(eff_ytoken_pred)
 
 	formatted_examples = []
-
-	for curr_tokens, curr_preds, curr_true in zip(tokens, token_predicted, eff_true):
-		if curr_true is None:
-			curr_true = [None for _ in range(len(curr_preds))]
-		assert len(curr_tokens) == len(curr_preds) == len(curr_true)
+	for words, sent_pred, sent_true, tok_pred, tok_true in zip(sentences,
+															   eff_ysent_pred, eff_ysent_true,
+															   eff_ytoken_pred, eff_ytoken_true):
 		formatted_examples.append("<div class='example'>")
 
-		formatted_examples.append("<div class='metadata'>")
-		formatted_examples.append("<code>{}</code>".format(" ".join(curr_tokens)))
-		formatted_examples.append("</div>")
-
-		formatted_examples.append("<div class='labels'>")
-		for token, pred_lbl, true_lbl in zip(curr_tokens, curr_preds, curr_true):
-			skip_token = pred_lbl == LOSS_IGNORE_INDEX or true_lbl == LOSS_IGNORE_INDEX
-			if skip_token:
-				continue
-
-			border_color, bg_color = "#5c5b5b", "#e3e3e3"  # gray
-			optional_tooltip = ""
-			# Visualize correctness only for "interesting" labels, e.g., positive labels in metaphor detection
-			if true_lbl is not None and (pred_lbl not in eff_uninteresting or true_lbl not in eff_uninteresting):
-				if pred_lbl == true_lbl:
-					border_color, bg_color = "#32a852", "#baffcd"  # green
+		# Sentence prediction visualization
+		if sent_pred is not None:
+			aux_correct_text = ""
+			color = "#e3e3e3"
+			if sent_true is not None:
+				if sent_pred == sent_true:
+					color = "#baffcd"
 				else:
-					optional_tooltip = f" title='Correct: {true_lbl}'"
-					border_color, bg_color = "#700900", "#ff9d94"  # red
+					color = "#ff9d94"
+					aux_correct_text = f" (<i>correct: {sent_true}</i>)"
 
-			formatted_examples.append(f"<div class='token' style='border: 2px solid {border_color}; background-color: {bg_color};'{optional_tooltip}>")
-			formatted_examples.append(f"<div style='text-align: center;' class='annotation'>y&#770;={pred_lbl}</div>")
-			formatted_examples.append(f"<div style='text-align: center;'>{token}</div>")
-			formatted_examples.append("</div>")
-		formatted_examples.append("</div>")
+			formatted_examples.append(
+				f"<div>"
+				f"<span style='background-color: {color}'>"
+				f"<strong>Predicted:</strong> {sent_pred}"
+				f"{aux_correct_text}"
+				f"</span>"
+				f"</div>")
 
-		formatted_examples.append("</div>")
+		# Token prediction visualization
+		if tok_pred is not None or tok_true is not None:
+			# First visualize highlighted token predictions
+			if tok_pred is not None:
+				assert len(tok_pred) == len(words)
+				pred_marked_words = deepcopy(words)
 
-	formatted_examples = "\n".join(formatted_examples)
-	return VIS_BOILERPLATE.format(formatted_examples=formatted_examples)
+				for _i, _pred in enumerate(tok_pred):
+					if _pred != "O" and _pred != 0:
+						pred_marked_words[_i] = f"<span style='background-color: #c1c7c9; padding: 2px'>{pred_marked_words[_i]}</span>"
 
+				formatted_examples.append("<div><strong>Token predictions:</strong><br />{}</div>".format(
+					" ".join(pred_marked_words)
+				))
 
-def visualize_sentence_predictions(sentences, labels_predicted, labels_true=None, uninteresting_labels=None):
-	assert isinstance(sentences, list) and isinstance(sentences[0], str)
-	eff_true = labels_true
-	if labels_true is None:
-		eff_true = [None for _ in range(len(labels_predicted))]
-	assert len(labels_predicted) == len(eff_true) == len(sentences)
-	eff_uninteresting = set(uninteresting_labels) if uninteresting_labels is not None else {"O", "not_metaphor"}
+			# Then visualize highlighted token correct annotations
+			if tok_true is not None:
+				assert len(tok_true) == len(words)
+				true_marked_words = deepcopy(words)
 
-	formatted_examples = []
-	for curr_sent, curr_pred, curr_true in zip(sentences, labels_predicted, eff_true):
-		formatted_examples.append("<div class='example'>")
+				for _i, _class in enumerate(tok_true):
+					if _class not in {"O", "not_metaphor", 0}:
+						true_marked_words[_i] = f"<span style='background-color: #c1c7c9; padding: 2px' title={_class}>" \
+												f"{true_marked_words[_i]}" \
+												f"</span>"
 
-		border_color, bg_color = "#5c5b5b", "#e3e3e3"  # gray
-		optional_tooltip = ""
-		# Visualize correctness only for "interesting" labels, e.g., positive labels in metaphor detection
-		if curr_true is not None and (curr_pred not in eff_uninteresting or curr_true not in eff_uninteresting):
-			if curr_pred == curr_true:
-				border_color, bg_color = "#32a852", "#baffcd"  # green
-			else:
-				optional_tooltip = f" title='Correct: {curr_true}'"
-				border_color, bg_color = "#700900", "#ff9d94"  # red
-
-		formatted_examples.append("<div class='example-label'>")
-		formatted_examples.append(f"<div class='square' style='border: 2px solid {border_color}; background-color: {bg_color};'{optional_tooltip}></div>")
-		formatted_examples.append(f"<strong>y&#770;={curr_pred}</strong>")
-		formatted_examples.append("</div>")
-
-		formatted_examples.append(f"<div class='example-text'>{curr_sent}</div>")
+				formatted_examples.append("<div><strong>Correct:</strong><br />{}</div>".format(" ".join(true_marked_words)))
+		else:
+			# If there are no token annotations provided, simply output the sentence words
+			formatted_examples.append("<div><strong>Input sentence:</strong><br />{}</div>".format(" ".join(words)))
 
 		formatted_examples.append("</div>")
 
@@ -218,11 +224,11 @@ if __name__ == "__main__":
 	preds = ['O', 'O', 'MRWi', 'O', 'O', 'O']
 	correct = ['O', 'O', 'MRWd', 'O', 'O', 'O']
 	with open("tmp.html", "w", encoding="utf-8") as f:
-		vis_html = visualize_token_predictions([_tokens], [preds], [correct])
+		vis_html = visualize_predictions([_tokens], ytoken_pred=[preds], ytoken_true=[correct])
 		print(vis_html, file=f)
 
 	with open("tmp_sent.html", "w", encoding="utf-8") as f:
-		vis_html = visualize_sentence_predictions(_sents,
-												  ["metaphor", "not_metaphor", "not_metaphor"],
-												  ["metaphor", "metaphor", "not_metaphor"])
+		vis_html = visualize_predictions([_tokens, _tokens, _tokens],
+										 ["metaphor", "not_metaphor", "not_metaphor"],
+										 ["metaphor", "metaphor", "not_metaphor"])
 		print(vis_html, file=f)
