@@ -343,6 +343,9 @@ if __name__ == "__main__":
     dev_probas_dense = torch.cat(dev_probas_dense)
     if args.optimize_bin_threshold:
         thresh_to_check = sorted(list(set(torch.flatten(dev_probas_dense[:, :, 1]).tolist())))
+        if len(thresh_to_check) > MAX_THRESH_TO_CHECK:
+            thresh_to_check = [thresh_to_check[int((idx / 100) * len(thresh_to_check))]
+                               for idx in range(1, 100)]
 
         best_thresh, metric_with_best_thresh = None, 0.0
         for curr_thresh in thresh_to_check:

@@ -196,8 +196,9 @@ if __name__ == "__main__":
 
         # Threshold-F1 curve: useful when evaluating model on a validation set
         thresh_to_check = sorted(list(set(mean_probas[:, 1].tolist())))
-        thresh_to_check = np.percentile(thresh_to_check, q=list(range(1, 100)),
-                                        method="closest_observation").tolist()
+        if len(thresh_to_check) > MAX_THRESH_TO_CHECK:
+            thresh_to_check = [thresh_to_check[int((idx / 100) * len(thresh_to_check))]
+                               for idx in range(1, 100)]
 
         # Holds (<thresh>, P, R, F1) for each threshold
         thresh_stats = []
