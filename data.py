@@ -1,12 +1,9 @@
 import ast
 import itertools
-import logging
 import warnings
 from collections import Counter
-from copy import deepcopy
 from typing import Dict, Optional, List, Union, Tuple
 
-import numpy as np
 import pandas as pd
 import torch
 from torch.utils.data import Dataset
@@ -600,8 +597,8 @@ def load_df(file_path) -> pd.DataFrame:
 
 if __name__ == "__main__":
     from transformers import AutoTokenizer
-    from data import load_df
 
+    # from data import load_df
     # df = load_df("/home/matej/Documents/metaphor-detection/data/komet_hf_format/train_komet_hf_format.tsv")
     # data = TransformersTokenDataset.from_dataframe(df, type_encoding=TAG2ID["independent"],
     #                                                max_length=32, stride=16, history_prev_sents=0,
