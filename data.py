@@ -590,6 +590,10 @@ def load_df(file_path) -> pd.DataFrame:
         df["met_type"] = df["met_type"].apply(ast.literal_eval)
     if "met_frame" in df.columns:
         df["met_frame"] = df["met_frame"].apply(ast.literal_eval)
+    if "preds_transformed" in df.columns:
+        df["preds_transformed"] = df["preds_transformed"].apply(ast.literal_eval)
+    if "true_transformed" in df.columns:
+        df["true_transformed"] = df["true_transformed"].apply(ast.literal_eval)
 
     return df
 
