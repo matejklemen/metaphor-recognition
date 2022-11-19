@@ -1,5 +1,4 @@
 import argparse
-import itertools
 import json
 import logging
 import os
@@ -15,7 +14,7 @@ from transformers import AutoModelForTokenClassification, AutoTokenizer
 
 from custom_modules import TokenClassifierWithLayerCombination
 from data import load_df, TransformersTokenDataset
-from utils import token_f1, token_recall, token_precision, visualize_token_predictions
+from utils import token_f1, token_recall, token_precision, visualize_predictions
 
 MAX_THRESH_TO_CHECK = 100
 
@@ -279,7 +278,8 @@ if __name__ == "__main__":
         if has_type:
             test_true_word_unpadded = [test_true_word_unpadded[_i] for _i in test_set.alignment_indices]
 
-        visualization_html = visualize_token_predictions(test_words, test_preds_word_unpadded, test_true_word_unpadded)
+        visualization_html = visualize_predictions(test_words,
+                                                   ytoken_pred=test_preds_word_unpadded, ytoken_true=test_true_word_unpadded)
         print(visualization_html, file=f)
 
     df_test["preds_transformed"] = test_preds_word_unpadded
