@@ -1,4 +1,5 @@
 import argparse
+import json
 import logging
 import os
 import sys
@@ -362,6 +363,9 @@ if __name__ == "__main__":
         dev_preds_dense = (dev_probas_dense[:, :, 1] >= best_thresh).int()
     else:
         dev_preds_dense = torch.argmax(dev_probas_dense, dim=-1)
+
+    with open(os.path.join(args.experiment_dir, "experiment_config.json"), "w") as f:
+        json.dump(vars(args), fp=f, indent=4)
 
     dev_preds_word_padded = dev_set.word_predictions(dev_preds_dense, pad=True,
                                                      aggr_strategy=args.word_prediction_strategy)
