@@ -589,9 +589,15 @@ def load_df(file_path) -> pd.DataFrame:
     if "met_frame" in df.columns:
         df["met_frame"] = df["met_frame"].apply(ast.literal_eval)
     if "preds_transformed" in df.columns:
-        df["preds_transformed"] = df["preds_transformed"].apply(ast.literal_eval)
+        try:
+            df["preds_transformed"] = df["preds_transformed"].apply(ast.literal_eval)
+        except ValueError:
+            print("Skipping conversion of 'preds_transformed' - ast.literal_eval could not be applied")
     if "true_transformed" in df.columns:
-        df["true_transformed"] = df["true_transformed"].apply(ast.literal_eval)
+        try:
+            df["true_transformed"] = df["true_transformed"].apply(ast.literal_eval)
+        except ValueError:
+            print("Skipping conversion of 'true_transformed' - ast.literal_eval could not be applied")
 
     return df
 
