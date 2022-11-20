@@ -74,7 +74,6 @@ parser.add_argument("--word_prediction_strategy", type=str, default="first",
 parser.add_argument("--layer_combination", action="store_true")
 parser.add_argument("--tune_last_only", action="store_true")
 
-parser.add_argument("--wandb_project_name", type=str, default="metaphor-komet-token-span-optimization")
 parser.add_argument("--random_seed", type=int, default=17)
 parser.add_argument("--use_cpu", action="store_true")
 
