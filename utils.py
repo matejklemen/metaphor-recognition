@@ -165,6 +165,7 @@ def visualize_predictions(sentences,
 			# First visualize highlighted token predictions
 			if tok_pred is not None:
 				assert len(tok_pred) == len(words)
+
 				pred_marked_words = deepcopy(words)
 
 				for _i, _pred in enumerate(tok_pred):
@@ -186,7 +187,7 @@ def visualize_predictions(sentences,
 												f"{true_marked_words[_i]}" \
 												f"</span>"
 
-				formatted_examples.append("<div><strong>Correct:</strong><br />{}</div>".format(" ".join(true_marked_words)))
+				formatted_examples.append("<div><strong>Human annotations:</strong><br />{}</div>".format(" ".join(true_marked_words)))
 		else:
 			# If there are no token annotations provided, simply output the sentence words
 			formatted_examples.append("<div><strong>Input sentence:</strong><br />{}</div>".format(" ".join(words)))
@@ -198,37 +199,46 @@ def visualize_predictions(sentences,
 
 
 if __name__ == "__main__":
-	t = torch.tensor([
-		[-100, 1, 1, 1, 2, 2, 0, -100],
-		[-100, 1, 0, 1, 2, 2, -100, -100],
-	])
-	p = torch.tensor([
-		[-100, 2, 0, 1, 1, 2, 0, -100],
-		[-100, 1, 0, 1, 2, 2, -100, -100],
-	])
+	from data import load_df
 
-	print(token_precision(t, p, pos_label=1))
-	print(token_recall(t, p, pos_label=1))
-	print(token_f1(t, p, pos_label=1))
-
-	t_bin = torch.tensor([[-100, 0, 0, 1, 1, -100]])
-	p_pos = torch.tensor([[0.5, 0.1, 0.4, 0.35, 0.8, 0.2]])
-	print(token_average_precision(true_labels=t_bin, pos_probas=p_pos))  # 0.833.. (sklearn example)
-
-	_tokens = ['Moderen', ',', 'čist', 'in', 'preprost', '.']
-	_sents = [
-		" ".join(['Moderen', ',', 'čist', 'in', 'preprost', '.']),
-		" ".join(['Moderen', ',', 'čist', 'in', 'preprost', '.']),
-		" ".join(['Moderen', ',', 'čist', 'in', 'preprost', '.'])
+	data_paths = [
+		"RESULTS/SENTENCE/komet-sent-csebert-2e-5-binary3-history0-optthresh/komet-sent-fold0-csebert-2e-5-binary3-history0-optthresh/predict-test/test_results.tsv"
 	]
-	preds = ['O', 'O', 'MRWi', 'O', 'O', 'O']
-	correct = ['O', 'O', 'MRWd', 'O', 'O', 'O']
-	with open("tmp.html", "w", encoding="utf-8") as f:
-		vis_html = visualize_predictions([_tokens], ytoken_pred=[preds], ytoken_true=[correct])
-		print(vis_html, file=f)
 
-	with open("tmp_sent.html", "w", encoding="utf-8") as f:
-		vis_html = visualize_predictions([_tokens, _tokens, _tokens],
-										 ["metaphor", "not_metaphor", "not_metaphor"],
-										 ["metaphor", "metaphor", "not_metaphor"])
+	# Token visualization logic
+	# all_words, all_token_preds, all_token_true = [], [], []
+	# for curr_path in data_paths:
+	# 	df = load_df(curr_path)
+	#
+	# 	all_words.extend(df["sentence_words"].tolist())
+	# 	all_token_preds.extend(df["preds_transformed"].tolist())
+	# 	all_token_true.extend(df["true_transformed"].tolist())
+	#
+	# with open("token_visualization.html", "w", encoding="utf-8") as f:
+	# 	vis_html = visualize_predictions(all_words, ytoken_pred=all_token_preds, ytoken_true=all_token_true)
+	# 	print(vis_html, file=f)
+
+	# Sentence visualization logic
+	all_words, all_sent_preds, all_sent_true, all_token_true = [], [], [], []
+	for curr_path in data_paths:
+		df = load_df(curr_path)
+
+		all_words.extend(df["sentence_words"].tolist())
+		all_sent_preds.extend(df["preds_transformed"].tolist())
+		all_sent_true.extend(df["true_transformed"].tolist())
+
+		token_true_dense = []
+		for words, met_type in zip(df["sentence_words"].tolist(),
+								   df["met_type"].tolist()):
+			curr_dense = ["O" for _ in range(len(words))]
+			for met_info in met_type:
+				for _i in met_info["word_indices"]:
+					curr_dense[_i] = met_info["type"]
+
+			token_true_dense.append(curr_dense)
+		all_token_true.extend(token_true_dense)
+
+	with open("sentence_visualization.html", "w", encoding="utf-8") as f:
+		vis_html = visualize_predictions(all_words, ysent_pred=all_sent_preds, ysent_true=all_sent_true,
+										 ytoken_true=all_token_true)
 		print(vis_html, file=f)
