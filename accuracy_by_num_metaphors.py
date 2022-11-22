@@ -37,7 +37,7 @@ if __name__ == "__main__":
 	def sentence_correctness(_preds, _true):
 		return Counter([_preds == _true])  # ACCURACY
 
-	plot_desc = None
+	plot_desc, xlabel = None, "Unknown"
 	groups = ["0.0", "(0.0, 0.1]", "(0.1, 0.2]", "(0.2, 1]"]
 	correctness_stats = []
 	total_counted = []
@@ -53,9 +53,11 @@ if __name__ == "__main__":
 			if isinstance(curr_preds, list) and isinstance(curr_true, list):
 				plot_desc = "Token-level metaphor recall"
 				group_correctness += token_correctness(curr_preds, curr_true)
+				xlabel = "Recall"
 			elif isinstance(curr_preds, str) and isinstance(curr_true, str):
 				plot_desc = "Sentence-level accuracy"
 				group_correctness += sentence_correctness(curr_preds, curr_true)
+				xlabel = "Accuracy"
 			else:
 				raise ValueError(f"Encountered unexpected combination of types: {type(curr_preds)} and {type(curr_true)}")
 
@@ -69,7 +71,8 @@ if __name__ == "__main__":
 	plt.barh(indexer, correctness_stats)
 	plt.yticks(indexer, groups)
 	plt.ylabel("Proportion of met. words in a sentence", rotation="vertical")
-	plt.xlabel("Accuracy")
+	plt.xlabel(f"{xlabel}")
+	plt.xlim([0.0, 1.0])
 
 	for _i in indexer:
 		plt.text(correctness_stats[_i], _i - 0.05, f"{correctness_stats[_i]:.3f} (N={total_counted[_i]})")
