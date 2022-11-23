@@ -4,8 +4,11 @@ import logging
 import os
 import sys
 from collections import Counter
+from copy import deepcopy
+from typing import List
 
 import numpy as np
+import pandas as pd
 import torch
 from sklearn.metrics import f1_score, precision_score, recall_score
 from torch import optim, nn
@@ -43,6 +46,7 @@ parser.add_argument("--validation_metric", type=str, default="f1_score_binary",
 parser.add_argument("--optimize_bin_threshold", action="store_true",
                     help="If set, optimize the decision threshold on the validation set using the best model")
 parser.add_argument("--tune_last_only", action="store_true")
+parser.add_argument("--synthetic_negatives", action="store_true")
 
 parser.add_argument("--random_seed", type=int, default=17)
 parser.add_argument("--use_cpu", action="store_true")
@@ -131,6 +135,37 @@ if __name__ == "__main__":
                 new_met_type.append(met_info)
 
         df_train.at[idx_ex, "met_type"] = new_met_type
+
+    if args.synthetic_negatives:
+        logging.info(f"Augmenting training data by creating new examples with "
+                     f"metaphors in metaphorical sentences replaced with {tokenizer.pad_token}")
+
+        def perturb_example(sent_words: List[str], met_type: List):
+            words_copy = deepcopy(sent_words)
+            for _met_info in met_type:
+                for _idx in _met_info["word_indices"]:
+                    words_copy[_idx] = tokenizer.pad_token
+
+            return words_copy
+
+        additional_data = df_train.loc[df_train["met_type"].apply(lambda _mets: len(_mets) > 0)].copy(deep=True).reset_index(drop=True)
+        for idx_ex in range(additional_data.shape[0]):
+            curr_ex = additional_data.iloc[idx_ex]
+            new_words = perturb_example(curr_ex["sentence_words"], curr_ex["met_type"])
+            additional_data.at[idx_ex, "document_name"] = f"aux{idx_ex}"
+            additional_data.at[idx_ex, "sentence_words"] = new_words
+
+        additional_data["met_type"] = [[] for _ in range(additional_data.shape[0])]
+        additional_data["met_frame"] = [[] for _ in range(additional_data.shape[0])]
+        additional_data["met_type_mapped"] = [[] for _ in range(additional_data.shape[0])]
+
+        # Try using synthetic negative examples INSTEAD of the same number of original negative examples
+        num_train_mets = df_train["met_type"].apply(lambda _mets: len(_mets))
+        train_positive = df_train.loc[num_train_mets > 0].reset_index(drop=True)
+        train_negative = df_train.loc[num_train_mets == 0].reset_index(drop=True)
+        subsampled_neg = train_negative.sample(n=max(0, (train_negative.shape[0] - additional_data.shape[0]))).reset_index(drop=True)
+
+        df_train = pd.concat((train_positive, subsampled_neg, additional_data), axis=0).reset_index(drop=True)
 
     df_dev = load_df(args.dev_path)
     for idx_ex in range(df_dev.shape[0]):
