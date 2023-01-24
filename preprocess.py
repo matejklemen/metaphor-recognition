@@ -4,8 +4,6 @@ import os
 from typing import List
 
 import datasets
-import numpy as np
-
 
 parser = argparse.ArgumentParser()
 parser.add_argument("--dataset_handle", type=str, default="cjvt/gkomet",
@@ -16,6 +14,7 @@ parser.add_argument("--dataset_dir", type=str, default="gkomet")
 
 if __name__ == "__main__":
 	args = parser.parse_args()
+	print(json.dumps(vars(args), indent=4))
 
 	datasets_kwargs = {}
 	if args.dataset_handle == "cjvt/ssj500k":
@@ -186,5 +185,6 @@ if __name__ == "__main__":
 		REMAP = {"»": "\"", "«": "\""}
 		return list(map(lambda _w: REMAP.get(_w, _w), words))
 
+	print(f"Saving {data.shape[0]} examples.")
 	data["sentence_words"] = data["sentence_words"].apply(lambda _words: _normalize(_words))
 	data.to_json(os.path.join(args.dataset_dir, "all.json"), orient="records", lines=True)
