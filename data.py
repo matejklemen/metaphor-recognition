@@ -1,5 +1,6 @@
 import ast
 import itertools
+import logging
 import warnings
 from collections import Counter
 from typing import Dict, Optional, List, Union, Tuple
@@ -581,23 +582,19 @@ def data_split(data):
 
 
 def load_df(file_path) -> pd.DataFrame:
-    df = pd.read_csv(file_path, sep="\t")
-    if "sentence_words" in df.columns:
-        df["sentence_words"] = df["sentence_words"].apply(ast.literal_eval)
-    if "met_type" in df.columns:
-        df["met_type"] = df["met_type"].apply(ast.literal_eval)
-    if "met_frame" in df.columns:
-        df["met_frame"] = df["met_frame"].apply(ast.literal_eval)
-    if "preds_transformed" in df.columns:
-        try:
-            df["preds_transformed"] = df["preds_transformed"].apply(ast.literal_eval)
-        except ValueError:
-            print("Skipping conversion of 'preds_transformed' - ast.literal_eval could not be applied")
-    if "true_transformed" in df.columns:
-        try:
-            df["true_transformed"] = df["true_transformed"].apply(ast.literal_eval)
-        except ValueError:
-            print("Skipping conversion of 'true_transformed' - ast.literal_eval could not be applied")
+    if file_path.endswith(".json"):
+        df = pd.read_json(file_path, orient="records", lines=True)
+    else:  # tsv
+        df = pd.read_csv(file_path, sep="\t")
+
+        COLS_TO_BE_TRANSFORMED = ["sentence_words", "met_type", "met_type_mapped", "met_frame", "preds_transformed",
+                                  "true_transformed", "lemma", "upos", "xpos", "feats", "head", "deprel"]
+        for col in COLS_TO_BE_TRANSFORMED:
+            if col in df.columns:
+                try:
+                    df[col] = df[col].apply(ast.literal_eval)
+                except:
+                    logging.warning(f"Skipping conversion of '{col}' - ast.literal_eval could not be applied")
 
     return df
 
